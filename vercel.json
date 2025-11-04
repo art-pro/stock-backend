@@ -9,11 +9,11 @@
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "/api/handler"
+      "dest": "/api/index.go"
     },
     {
       "src": "/(.*)",
-      "dest": "/api/handler"
+      "dest": "/api/index.go"
     }
   ]
 }
