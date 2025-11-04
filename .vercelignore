@@ -1,0 +1,19 @@
+# Ignore frontend directory when deploying backend
+frontend/
+
+# Ignore documentation
+*.md
+CLAUDE.md
+CONTRIBUTING.md
+DEPLOYMENT*.md
+QUICK_REFERENCE.md
+ROUTING_FIX.md
+SETUP_GUIDE.md
+VERCEL*.md
+WARP.md
+README.md
+LICENSE
+
+# Ignore test scripts
+test-*.sh
+
