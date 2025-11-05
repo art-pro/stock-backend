@@ -18,9 +18,16 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 
 	router := gin.Default()
 
-	// CORS configuration
+	// CORS configuration - allow all Vercel frontend URLs
 	corsConfig := cors.Config{
-		AllowOrigins:     []string{cfg.FrontendURL, "http://localhost:3000"},
+		AllowOrigins: []string{
+			cfg.FrontendURL,
+			"http://localhost:3000",
+			"https://stock-frontend-silk.vercel.app",
+			"https://stock-frontend-artpros-projects.vercel.app",
+			"https://www.artpro.dev",
+			"https://artpro.dev",
+		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
