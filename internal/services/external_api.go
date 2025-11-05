@@ -186,7 +186,7 @@ Calculate ALL fields using the formulas provided. Return ONLY the JSON object.`,
 	var resp *http.Response
 	for i := 0; i < 3; i++ {
 		resp, err = s.client.Do(req)
-		if err == nil && resp.StatusCode == http.StatusOK {
+		if err == nil && resp != nil && resp.StatusCode == http.StatusOK {
 			break
 		}
 
@@ -196,31 +196,50 @@ Calculate ALL fields using the formulas provided. Return ONLY the JSON object.`,
 	}
 
 	if err != nil {
+		fmt.Printf("Grok API request error: %v\n", err)
+		return s.mockStockData(stock)
+	}
+	if resp == nil {
+		fmt.Printf("Grok API: no response received\n")
 		return s.mockStockData(stock)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
+	if resp.StatusCode != http.StatusOK {
+		fmt.Printf("Grok API returned status: %d\n", resp.StatusCode)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		fmt.Printf("Grok API error response: %s\n", string(bodyBytes))
 		return s.mockStockData(stock)
 	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("Failed to read Grok response body: %v\n", err)
+		return s.mockStockData(stock)
+	}
+
+	fmt.Printf("Grok raw response: %s\n", string(body))
 
 	// Parse Grok response
 	var grokResp GrokStockResponse
 	if err := json.Unmarshal(body, &grokResp); err != nil {
+		fmt.Printf("Failed to parse Grok response JSON: %v\n", err)
 		return s.mockStockData(stock)
 	}
 
 	// Extract the JSON content from Grok's response
 	if len(grokResp.Choices) == 0 {
+		fmt.Printf("Grok response has no choices\n")
 		return s.mockStockData(stock)
 	}
 
 	content := grokResp.Choices[0].Message.Content
+	fmt.Printf("Grok content: %s\n", content)
 
 	// Parse the stock analysis JSON
 	var analysis StockAnalysis
 	if err := json.Unmarshal([]byte(content), &analysis); err != nil {
+		fmt.Printf("Failed to parse Grok stock analysis: %v\n", err)
 		return s.mockStockData(stock)
 	}
 
