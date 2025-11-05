@@ -1,9 +1,9 @@
 package api
 
 import (
-	"github.com/artpro/assessapp/internal/api/handlers"
-	"github.com/artpro/assessapp/internal/config"
-	"github.com/artpro/assessapp/internal/middleware"
+	"github.com/artpro/assessapp/pkg/api/handlers"
+	"github.com/artpro/assessapp/pkg/config"
+	"github.com/artpro/assessapp/pkg/middleware"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
@@ -70,6 +70,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 		protected.POST("/stocks", stockHandler.CreateStock)
 		protected.PUT("/stocks/:id", stockHandler.UpdateStock)
 		protected.PATCH("/stocks/:id/price", stockHandler.UpdateStockPrice)
+		protected.PATCH("/stocks/:id/field", stockHandler.UpdateStockField)
 		protected.DELETE("/stocks/:id", stockHandler.DeleteStock)
 		protected.POST("/stocks/update-all", stockHandler.UpdateAllStocks)
 		protected.POST("/stocks/:id/update", stockHandler.UpdateSingleStock)

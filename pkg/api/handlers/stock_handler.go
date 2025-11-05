@@ -255,6 +255,67 @@ func (h *StockHandler) UpdateStockPrice(c *gin.Context) {
 	c.JSON(http.StatusOK, stock)
 }
 
+// UpdateStockField updates a single field (avg_price_local, fair_value, shares_owned) and recalculates metrics
+func (h *StockHandler) UpdateStockField(c *gin.Context) {
+	id := c.Param("id")
+	
+	var stock models.Stock
+	if err := h.db.First(&stock, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
+		return
+	}
+
+	var req struct {
+		Field string  `json:"field" binding:"required"`
+		Value float64 `json:"value" binding:"required,gte=0"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	// Update the specified field
+	switch req.Field {
+	case "avg_price_local":
+		stock.AvgPriceLocal = req.Value
+	case "fair_value":
+		stock.FairValue = req.Value
+	case "shares_owned":
+		stock.SharesOwned = int(req.Value)
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid field name"})
+		return
+	}
+
+	stock.LastUpdated = time.Now()
+
+	// Recalculate all derived metrics
+	services.CalculateMetrics(&stock)
+
+	// Get FX rate for USD conversion
+	fxRate, err := h.apiService.FetchExchangeRate(stock.Currency)
+	if err != nil {
+		h.logger.Warn().Err(err).Str("currency", stock.Currency).Msg("Failed to fetch FX rate")
+		fxRate = 1.0
+	}
+
+	// Recalculate USD values
+	stock.CurrentValueUSD = float64(stock.SharesOwned) * stock.CurrentPrice * fxRate
+	costBasis := float64(stock.SharesOwned) * stock.AvgPriceLocal * fxRate
+	stock.UnrealizedPnL = stock.CurrentValueUSD - costBasis
+
+	// Save to database
+	if err := h.db.Save(&stock).Error; err != nil {
+		h.logger.Error().Err(err).Msg("Failed to save stock")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save stock"})
+		return
+	}
+
+	h.logger.Info().Str("ticker", stock.Ticker).Str("field", req.Field).Float64("new_value", req.Value).Msg("Stock field manually updated")
+
+	c.JSON(http.StatusOK, stock)
+}
+
 // DeleteStock soft-deletes a stock (moves to log)
 func (h *StockHandler) DeleteStock(c *gin.Context) {
 	id := c.Param("id")
