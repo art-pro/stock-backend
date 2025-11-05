@@ -109,6 +109,11 @@ func (s *ExternalAPIService) FetchAllStockData(stock *models.Stock) error {
 
 Provide a COMPLETE financial analysis including raw data AND calculated investment metrics.
 
+CRITICAL DEFINITIONS:
+- "current_price" = ACTUAL TRADING PRICE RIGHT NOW on the stock exchange (NOT the target/fair value)
+- "fair_value" = Analyst consensus TARGET price (what analysts think it should reach)
+- These are DIFFERENT values. Current price is what you can buy it for TODAY.
+
 IMPORTANT FORMULAS:
 - upside_potential = ((fair_value - current_price) / current_price) × 100
 - b_ratio = upside_potential / |downside_risk|
@@ -124,10 +129,10 @@ Return ONLY a valid JSON object with these EXACT fields (no additional text):
 {
   "ticker": "%s",
   "company_name": "Full company name",
-  "current_price": current market price as number,
+  "current_price": THE ACTUAL MARKET PRICE RIGHT NOW (what someone would pay today on the exchange),
   "currency": "%s",
   "exchange_rate_to_usd": current exchange rate (1 %s = X USD, e.g., 1 DKK = 0.1538 USD),
-  "fair_value": analyst consensus target price,
+  "fair_value": analyst consensus TARGET price (future price target, typically higher than current),
   "beta": stock's beta coefficient,
   "volatility": annualized volatility percentage,
   "pe_ratio": price to earnings ratio,
@@ -137,7 +142,7 @@ Return ONLY a valid JSON object with these EXACT fields (no additional text):
   "probability_positive": probability of positive outcome (0-1),
   "downside_risk": downside risk percentage (negative number),
   "b_ratio": calculated upside/downside ratio,
-  "upside_potential": calculated upside percentage,
+  "upside_potential": calculated upside percentage (must be (fair_value - current_price) / current_price × 100),
   "expected_value": calculated expected value percentage,
   "kelly_fraction": calculated Kelly criterion percentage,
   "half_kelly_suggested": calculated half-Kelly percentage (capped at 15),
@@ -146,6 +151,7 @@ Return ONLY a valid JSON object with these EXACT fields (no additional text):
   "assessment": "Add", "Hold", "Trim", or "Sell" based on expected_value
 }
 
+VERIFY: The current_price must be LOWER than fair_value if there is positive upside potential.
 Calculate ALL fields using the formulas provided. Return ONLY the JSON object.`,
 		stock.Ticker, stock.CompanyName, stock.Sector, stock.Currency,
 		stock.Ticker, stock.Currency, stock.Currency)
