@@ -10,9 +10,9 @@ import (
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 
-	"github.com/artpro/assessapp/internal/api"
-	"github.com/artpro/assessapp/internal/config"
-	"github.com/artpro/assessapp/internal/database"
+	"github.com/artpro/assessapp/pkg/api"
+	"github.com/artpro/assessapp/pkg/config"
+	"github.com/artpro/assessapp/pkg/database"
 )
 
 var (

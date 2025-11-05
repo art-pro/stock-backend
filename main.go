@@ -4,10 +4,10 @@ import (
 	"log"
 	"os"
 
-	"github.com/artpro/assessapp/internal/api"
-	"github.com/artpro/assessapp/internal/config"
-	"github.com/artpro/assessapp/internal/database"
-	"github.com/artpro/assessapp/internal/scheduler"
+	"github.com/artpro/assessapp/pkg/api"
+	"github.com/artpro/assessapp/pkg/config"
+	"github.com/artpro/assessapp/pkg/database"
+	"github.com/artpro/assessapp/pkg/scheduler"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
 )
@@ -42,7 +42,7 @@ func main() {
 
 	// Initialize and start API server
 	router := api.SetupRouter(db, cfg, logger)
-	
+
 	port := cfg.Port
 	if port == "" {
 		port = "8080"
@@ -53,4 +53,3 @@ func main() {
 		logger.Fatal().Err(err).Msg("Failed to start server")
 	}
 }
-
