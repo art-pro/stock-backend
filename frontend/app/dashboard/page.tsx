@@ -37,8 +37,8 @@ export default function DashboardPage() {
     try {
       setLoading(true);
       const response = await portfolioAPI.getSummary();
-      setStocks(response.data.stocks);
-      setMetrics(response.data.summary);
+      setStocks(response.data.stocks || []);
+      setMetrics(response.data.summary || null);
       setError('');
     } catch (err: any) {
       setError('Failed to load portfolio data');

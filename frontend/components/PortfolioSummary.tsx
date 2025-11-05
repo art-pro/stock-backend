@@ -23,11 +23,12 @@ export default function PortfolioSummary({ metrics }: PortfolioSummaryProps) {
   };
 
   // Prepare chart data
+  const sectorWeights = metrics.sector_weights || {};
   const chartData = {
-    labels: Object.keys(metrics.sector_weights),
+    labels: Object.keys(sectorWeights),
     datasets: [
       {
-        data: Object.values(metrics.sector_weights),
+        data: Object.values(sectorWeights),
         backgroundColor: [
           'rgba(59, 130, 246, 0.8)', // blue
           'rgba(16, 185, 129, 0.8)', // green
@@ -71,7 +72,7 @@ export default function PortfolioSummary({ metrics }: PortfolioSummaryProps) {
           Total Portfolio Value
         </h3>
         <p className="text-2xl font-bold text-white">
-          {formatCurrency(metrics.total_value)}
+          {formatCurrency(metrics.total_value || 0)}
         </p>
       </div>
 
@@ -82,11 +83,11 @@ export default function PortfolioSummary({ metrics }: PortfolioSummaryProps) {
           <span className="tooltiptext">Weighted average EV across all positions</span>
         </h3>
         <p className={`text-2xl font-bold ${
-          metrics.overall_ev > 7 ? 'text-green-400' : 
-          metrics.overall_ev > 0 ? 'text-yellow-400' : 
+          (metrics.overall_ev || 0) > 7 ? 'text-green-400' : 
+          (metrics.overall_ev || 0) > 0 ? 'text-yellow-400' : 
           'text-red-400'
         }`}>
-          {formatPercent(metrics.overall_ev, 1)}
+          {formatPercent(metrics.overall_ev || 0, 1)}
         </p>
       </div>
 
@@ -97,7 +98,7 @@ export default function PortfolioSummary({ metrics }: PortfolioSummaryProps) {
           <span className="tooltiptext">Risk-adjusted return: EV / Volatility</span>
         </h3>
         <p className="text-2xl font-bold text-white">
-          {metrics.sharpe_ratio.toFixed(2)}
+          {(metrics.sharpe_ratio || 0).toFixed(2)}
         </p>
       </div>
 
@@ -108,11 +109,11 @@ export default function PortfolioSummary({ metrics }: PortfolioSummaryProps) {
           <span className="tooltiptext">Weighted average volatility (target: 11-13%)</span>
         </h3>
         <p className={`text-2xl font-bold ${
-          metrics.weighted_volatility > 13 ? 'text-red-400' : 
-          metrics.weighted_volatility < 11 ? 'text-yellow-400' : 
+          (metrics.weighted_volatility || 0) > 13 ? 'text-red-400' : 
+          (metrics.weighted_volatility || 0) < 11 ? 'text-yellow-400' : 
           'text-green-400'
         }`}>
-          {formatPercent(metrics.weighted_volatility, 1)}
+          {formatPercent(metrics.weighted_volatility || 0, 1)}
         </p>
       </div>
 
@@ -123,7 +124,7 @@ export default function PortfolioSummary({ metrics }: PortfolioSummaryProps) {
           <span className="tooltiptext">Sum of position weights vs. suggested allocations</span>
         </h3>
         <p className="text-2xl font-bold text-white">
-          {formatPercent(metrics.kelly_utilization, 1)}
+          {formatPercent(metrics.kelly_utilization || 0, 1)}
         </p>
       </div>
 

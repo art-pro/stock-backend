@@ -25,7 +25,7 @@ export default function StockTable({ stocks, onDelete, onUpdate }: StockTablePro
     }
   };
 
-  const filteredStocks = stocks.filter(
+  const filteredStocks = (stocks || []).filter(
     (stock) =>
       stock.ticker.toLowerCase().includes(filter.toLowerCase()) ||
       stock.company_name.toLowerCase().includes(filter.toLowerCase()) ||
