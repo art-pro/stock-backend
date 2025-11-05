@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/artpro/assessapp/pkg/config"
 	"github.com/artpro/assessapp/pkg/models"
@@ -100,6 +101,44 @@ func (h *PortfolioHandler) GetSettings(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, settings)
+}
+
+// GetAPIStatus returns the status of external API connections
+func (h *PortfolioHandler) GetAPIStatus(c *gin.Context) {
+	status := gin.H{
+		"grok": gin.H{
+			"configured": h.cfg.XAIAPIKey != "",
+			"status":     "unknown",
+		},
+		"timestamp": time.Now(),
+	}
+
+	// Test Grok connection if configured
+	if h.cfg.XAIAPIKey != "" {
+		// Create a minimal test stock
+		testStock := models.Stock{
+			Ticker:      "TEST",
+			CompanyName: "Test Company",
+			Sector:      "Technology",
+			Currency:    "USD",
+		}
+
+		// Try to fetch data
+		err := h.apiService.FetchAllStockData(&testStock)
+		if err != nil {
+			status["grok"].(gin.H)["status"] = "error"
+			status["grok"].(gin.H)["error"] = err.Error()
+		} else {
+			status["grok"].(gin.H)["status"] = "connected"
+			status["grok"].(gin.H)["using_mock"] = false
+		}
+	} else {
+		status["grok"].(gin.H)["status"] = "not_configured"
+		status["grok"].(gin.H)["using_mock"] = true
+		status["grok"].(gin.H)["message"] = "Using mock data. Add XAI_API_KEY to .env for real data"
+	}
+
+	c.JSON(http.StatusOK, status)
 }
 
 // UpdateSettings updates portfolio settings

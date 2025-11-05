@@ -89,6 +89,9 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 		protected.GET("/portfolio/summary", portfolioHandler.GetPortfolioSummary)
 		protected.GET("/portfolio/settings", portfolioHandler.GetSettings)
 		protected.PUT("/portfolio/settings", portfolioHandler.UpdateSettings)
+		
+		// API Status routes
+		protected.GET("/api-status", portfolioHandler.GetAPIStatus)
 
 		// Export/Import routes
 		protected.GET("/export/csv", stockHandler.ExportCSV)
