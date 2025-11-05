@@ -48,7 +48,7 @@ func (h *StockHandler) GetAllStocks(c *gin.Context) {
 // GetStock returns a single stock
 func (h *StockHandler) GetStock(c *gin.Context) {
 	id := c.Param("id")
-	
+
 	var stock models.Stock
 	if err := h.db.First(&stock, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -65,14 +65,14 @@ func (h *StockHandler) GetStock(c *gin.Context) {
 
 // CreateStockRequest represents request to create a stock
 type CreateStockRequest struct {
-	Ticker               string  `json:"ticker" binding:"required"`
-	CompanyName          string  `json:"company_name" binding:"required"`
-	Sector               string  `json:"sector" binding:"required"`
-	Currency             string  `json:"currency"`
-	SharesOwned          int     `json:"shares_owned"`
-	AvgPriceLocal        float64 `json:"avg_price_local"`
-	UpdateFrequency      string  `json:"update_frequency"`
-	ProbabilityPositive  float64 `json:"probability_positive"` // Optional manual input
+	Ticker              string  `json:"ticker" binding:"required"`
+	CompanyName         string  `json:"company_name" binding:"required"`
+	Sector              string  `json:"sector" binding:"required"`
+	Currency            string  `json:"currency"`
+	SharesOwned         int     `json:"shares_owned"`
+	AvgPriceLocal       float64 `json:"avg_price_local"`
+	UpdateFrequency     string  `json:"update_frequency"`
+	ProbabilityPositive float64 `json:"probability_positive"` // Optional manual input
 }
 
 // CreateStock creates a new stock and triggers initial calculations
@@ -117,12 +117,12 @@ func (h *StockHandler) CreateStock(c *gin.Context) {
 		h.logger.Error().Err(err).Str("ticker", stock.Ticker).Msg("⚠️ GROK FETCH FAILED during stock creation - Check API key and logs above")
 		// Return error to prevent saving stock with N/A data
 		c.JSON(http.StatusBadGateway, gin.H{
-			"error": "Failed to fetch stock data from Grok API. Please check your XAI_API_KEY configuration.",
+			"error":  "Failed to fetch stock data from Grok API. Please check your XAI_API_KEY configuration.",
 			"ticker": stock.Ticker,
 		})
 		return
 	}
-	
+
 	h.logger.Info().Str("ticker", stock.Ticker).Msg("✓ Successfully fetched data from Grok")
 
 	// NO NEED to call CalculateMetrics - Grok already calculated everything!
@@ -177,7 +177,7 @@ func (h *StockHandler) CreateStock(c *gin.Context) {
 // UpdateStock updates an existing stock
 func (h *StockHandler) UpdateStock(c *gin.Context) {
 	id := c.Param("id")
-	
+
 	var stock models.Stock
 	if err := h.db.First(&stock, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
@@ -209,7 +209,7 @@ func (h *StockHandler) UpdateStock(c *gin.Context) {
 // UpdateStockPrice updates just the current price and recalculates metrics
 func (h *StockHandler) UpdateStockPrice(c *gin.Context) {
 	id := c.Param("id")
-	
+
 	var stock models.Stock
 	if err := h.db.First(&stock, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
@@ -258,7 +258,7 @@ func (h *StockHandler) UpdateStockPrice(c *gin.Context) {
 // UpdateStockField updates a single field (avg_price_local, fair_value, shares_owned) and recalculates metrics
 func (h *StockHandler) UpdateStockField(c *gin.Context) {
 	id := c.Param("id")
-	
+
 	var stock models.Stock
 	if err := h.db.First(&stock, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
@@ -320,7 +320,7 @@ func (h *StockHandler) UpdateStockField(c *gin.Context) {
 func (h *StockHandler) DeleteStock(c *gin.Context) {
 	id := c.Param("id")
 	username, _ := c.Get("username")
-	
+
 	var stock models.Stock
 	if err := h.db.First(&stock, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
@@ -390,17 +390,17 @@ func (h *StockHandler) UpdateAllStocks(c *gin.Context) {
 	h.logger.Info().Int("updated", updatedCount).Int("errors", errorCount).Msg("Bulk stock update completed")
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":      "Update completed",
-		"updated":      updatedCount,
-		"errors":       errorCount,
-		"total":        len(stocks),
+		"message": "Update completed",
+		"updated": updatedCount,
+		"errors":  errorCount,
+		"total":   len(stocks),
 	})
 }
 
 // UpdateSingleStock updates a single stock's data
 func (h *StockHandler) UpdateSingleStock(c *gin.Context) {
 	id := c.Param("id")
-	
+
 	var stock models.Stock
 	if err := h.db.First(&stock, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
@@ -429,7 +429,7 @@ func (h *StockHandler) updateStockData(stock *models.Stock) error {
 		// Mock data is already set by the service including all calculations
 		return err
 	}
-	
+
 	h.logger.Info().Str("ticker", stock.Ticker).Msg("✓ Successfully fetched data from Grok")
 
 	// NO NEED to call CalculateMetrics - Grok already calculated everything!
@@ -491,7 +491,7 @@ func (h *StockHandler) updateStockData(stock *models.Stock) error {
 // GetStockHistory returns historical data for a stock
 func (h *StockHandler) GetStockHistory(c *gin.Context) {
 	id := c.Param("id")
-	
+
 	var history []models.StockHistory
 	if err := h.db.Where("stock_id = ?", id).Order("recorded_at DESC").Limit(100).Find(&history).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to fetch stock history")
@@ -517,7 +517,7 @@ func (h *StockHandler) GetDeletedStocks(c *gin.Context) {
 // RestoreStock restores a deleted stock
 func (h *StockHandler) RestoreStock(c *gin.Context) {
 	id := c.Param("id")
-	
+
 	var deletedStock models.DeletedStock
 	if err := h.db.First(&deletedStock, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Deleted stock not found"})
@@ -671,4 +671,3 @@ func (h *StockHandler) ImportCSV(c *gin.Context) {
 		"skipped":  skipped,
 	})
 }
-

@@ -22,16 +22,16 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 
 	// Check if DATABASE_URL is set (PostgreSQL for production)
 	databaseURL := os.Getenv("DATABASE_URL")
-	
+
 	if databaseURL != "" {
 		// Use PostgreSQL for production (Vercel)
 		fmt.Println("Using PostgreSQL database")
-		
+
 		// Handle Vercel Postgres format: postgres:// -> postgresql://
 		if strings.HasPrefix(databaseURL, "postgres://") {
 			databaseURL = strings.Replace(databaseURL, "postgres://", "postgresql://", 1)
 		}
-		
+
 		db, err = gorm.Open(postgres.Open(databaseURL), &gorm.Config{
 			Logger: logger.Default.LogMode(logger.Info),
 		})
@@ -41,7 +41,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	} else {
 		// Use SQLite for local development
 		fmt.Printf("Using SQLite database: %s\n", dbPath)
-		
+
 		// Ensure the directory exists
 		dir := filepath.Dir(dbPath)
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -75,7 +75,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 func InitializeAdminUser(db *gorm.DB, username, password string) error {
 	var user models.User
 	result := db.Where("username = ?", username).First(&user)
-	
+
 	if result.Error == gorm.ErrRecordNotFound {
 		// Create admin user
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -102,7 +102,7 @@ func InitializeAdminUser(db *gorm.DB, username, password string) error {
 func InitializePortfolioSettings(db *gorm.DB) error {
 	var settings models.PortfolioSettings
 	result := db.First(&settings)
-	
+
 	if result.Error == gorm.ErrRecordNotFound {
 		settings = models.PortfolioSettings{
 			TotalPortfolioValue: 0,
@@ -118,4 +118,3 @@ func InitializePortfolioSettings(db *gorm.DB) error {
 
 	return nil
 }
-
