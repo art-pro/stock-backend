@@ -111,22 +111,18 @@ func (h *StockHandler) CreateStock(c *gin.Context) {
 		stock.ProbabilityPositive = 0.65 // Default conservative value
 	}
 
-	// Fetch current price (with automatic fallback to mock)
-	price, err := h.apiService.FetchStockPrice(stock.Ticker)
-	if err != nil {
-		h.logger.Warn().Err(err).Str("ticker", stock.Ticker).Msg("Failed to fetch price, using mock data")
-		price = 100.0 // Fallback price
-	}
-	stock.CurrentPrice = price
-
-	// Fetch Grok calculations (with automatic fallback to mock)
-	if err := h.apiService.FetchGrokCalculations(&stock); err != nil {
-		h.logger.Warn().Err(err).Str("ticker", stock.Ticker).Msg("Failed to fetch Grok calculations, using mock data")
-		// Mock calculations are handled in the service
+	// Fetch all stock data from Grok in one call (includes ALL calculations!)
+	// With automatic fallback to mock data that also includes calculations
+	if err := h.apiService.FetchAllStockData(&stock); err != nil {
+		h.logger.Warn().Err(err).Str("ticker", stock.Ticker).Msg("Failed to fetch stock data from Grok, using mock data")
+		// Mock data is already set by the service including all calculations
 	}
 
-	// Calculate derived metrics
-	services.CalculateMetrics(&stock)
+	// NO NEED to call CalculateMetrics - Grok already calculated everything!
+	// The following fields are now provided by Grok:
+	// - UpsidePotential, BRatio, ExpectedValue
+	// - KellyFraction, HalfKellySuggested
+	// - BuyZoneMin, BuyZoneMax, Assessment
 
 	// Get FX rate for USD conversion
 	fxRate, err := h.apiService.FetchExchangeRate(stock.Currency)
@@ -310,23 +306,13 @@ func (h *StockHandler) updateStockData(stock *models.Stock) error {
 	// Store old EV for alert comparison
 	oldEV := stock.ExpectedValue
 
-	// Fetch current price (now with automatic fallback to mock)
-	price, err := h.apiService.FetchStockPrice(stock.Ticker)
-	if err != nil {
-		h.logger.Warn().Err(err).Str("ticker", stock.Ticker).Msg("Failed to fetch stock price")
-		// Use a mock price as last resort
-		price = 100.0
-	}
-	stock.CurrentPrice = price
-
-	// Fetch Grok calculations (with automatic fallback to mock)
-	if err := h.apiService.FetchGrokCalculations(stock); err != nil {
-		h.logger.Warn().Err(err).Str("ticker", stock.Ticker).Msg("Failed to fetch Grok calculations")
-		// Mock calculations are already handled in the service
+	// Fetch all stock data from Grok in one call (includes ALL calculations!)
+	if err := h.apiService.FetchAllStockData(stock); err != nil {
+		h.logger.Warn().Err(err).Str("ticker", stock.Ticker).Msg("Failed to fetch stock data from Grok, using mock data")
+		// Mock data is already set by the service including all calculations
 	}
 
-	// Calculate derived metrics
-	services.CalculateMetrics(stock)
+	// NO NEED to call CalculateMetrics - Grok already calculated everything!
 
 	// Get FX rate for USD conversion
 	fxRate, err := h.apiService.FetchExchangeRate(stock.Currency)
