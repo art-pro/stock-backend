@@ -266,8 +266,9 @@ func (h *StockHandler) UpdateStockField(c *gin.Context) {
 	}
 
 	var req struct {
-		Field string  `json:"field" binding:"required"`
-		Value float64 `json:"value" binding:"required,gte=0"`
+		Field       string      `json:"field" binding:"required"`
+		Value       interface{} `json:"value"`
+		StringValue string      `json:"string_value"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
@@ -275,34 +276,130 @@ func (h *StockHandler) UpdateStockField(c *gin.Context) {
 	}
 
 	// Update the specified field
+	fieldUpdated := false
 	switch req.Field {
+	// Numeric fields
+	case "current_price":
+		if floatVal, ok := req.Value.(float64); ok && floatVal >= 0 {
+			stock.CurrentPrice = floatVal
+			fieldUpdated = true
+		}
 	case "avg_price_local":
-		stock.AvgPriceLocal = req.Value
+		if floatVal, ok := req.Value.(float64); ok && floatVal >= 0 {
+			stock.AvgPriceLocal = floatVal
+			fieldUpdated = true
+		}
 	case "fair_value":
-		stock.FairValue = req.Value
+		if floatVal, ok := req.Value.(float64); ok && floatVal >= 0 {
+			stock.FairValue = floatVal
+			fieldUpdated = true
+		}
 	case "shares_owned":
-		stock.SharesOwned = int(req.Value)
+		if floatVal, ok := req.Value.(float64); ok && floatVal >= 0 {
+			stock.SharesOwned = int(floatVal)
+			fieldUpdated = true
+		}
+	case "beta":
+		if floatVal, ok := req.Value.(float64); ok && floatVal >= 0 {
+			stock.Beta = floatVal
+			fieldUpdated = true
+		}
+	case "volatility":
+		if floatVal, ok := req.Value.(float64); ok && floatVal >= 0 {
+			stock.Volatility = floatVal
+			fieldUpdated = true
+		}
+	case "probability_positive":
+		if floatVal, ok := req.Value.(float64); ok && floatVal >= 0 && floatVal <= 1 {
+			stock.ProbabilityPositive = floatVal
+			fieldUpdated = true
+		}
+	case "downside_risk":
+		if floatVal, ok := req.Value.(float64); ok && floatVal <= 0 {
+			stock.DownsideRisk = floatVal
+			fieldUpdated = true
+		}
+	case "pe_ratio":
+		if floatVal, ok := req.Value.(float64); ok && floatVal >= 0 {
+			stock.PERatio = floatVal
+			fieldUpdated = true
+		}
+	case "eps_growth_rate":
+		if floatVal, ok := req.Value.(float64); ok {
+			stock.EPSGrowthRate = floatVal
+			fieldUpdated = true
+		}
+	case "debt_to_ebitda":
+		if floatVal, ok := req.Value.(float64); ok && floatVal >= 0 {
+			stock.DebtToEBITDA = floatVal
+			fieldUpdated = true
+		}
+	case "dividend_yield":
+		if floatVal, ok := req.Value.(float64); ok && floatVal >= 0 {
+			stock.DividendYield = floatVal
+			fieldUpdated = true
+		}
+	// String fields
+	case "comment":
+		if req.StringValue != "" {
+			stock.Comment = req.StringValue
+			fieldUpdated = true
+		} else if strVal, ok := req.Value.(string); ok {
+			stock.Comment = strVal
+			fieldUpdated = true
+		}
+	case "company_name":
+		if req.StringValue != "" {
+			stock.CompanyName = req.StringValue
+			fieldUpdated = true
+		} else if strVal, ok := req.Value.(string); ok && strVal != "" {
+			stock.CompanyName = strVal
+			fieldUpdated = true
+		}
+	case "sector":
+		if req.StringValue != "" {
+			stock.Sector = req.StringValue
+			fieldUpdated = true
+		} else if strVal, ok := req.Value.(string); ok && strVal != "" {
+			stock.Sector = strVal
+			fieldUpdated = true
+		}
+	case "update_frequency":
+		if req.StringValue != "" {
+			stock.UpdateFrequency = req.StringValue
+			fieldUpdated = true
+		} else if strVal, ok := req.Value.(string); ok && strVal != "" {
+			stock.UpdateFrequency = strVal
+			fieldUpdated = true
+		}
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid field name"})
 		return
 	}
 
-	stock.LastUpdated = time.Now()
-
-	// Recalculate all derived metrics
-	services.CalculateMetrics(&stock)
-
-	// Get FX rate for USD conversion
-	fxRate, err := h.apiService.FetchExchangeRate(stock.Currency)
-	if err != nil {
-		h.logger.Warn().Err(err).Str("currency", stock.Currency).Msg("Failed to fetch FX rate")
-		fxRate = 1.0
+	if !fieldUpdated {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to update field - invalid value"})
+		return
 	}
 
-	// Recalculate USD values
-	stock.CurrentValueUSD = float64(stock.SharesOwned) * stock.CurrentPrice * fxRate
-	costBasis := float64(stock.SharesOwned) * stock.AvgPriceLocal * fxRate
-	stock.UnrealizedPnL = stock.CurrentValueUSD - costBasis
+	stock.LastUpdated = time.Now()
+
+	// Recalculate all derived metrics (only if numeric fields changed)
+	if req.Field != "comment" && req.Field != "company_name" && req.Field != "sector" && req.Field != "update_frequency" {
+		services.CalculateMetrics(&stock)
+
+		// Get FX rate for USD conversion
+		fxRate, err := h.apiService.FetchExchangeRate(stock.Currency)
+		if err != nil {
+			h.logger.Warn().Err(err).Str("currency", stock.Currency).Msg("Failed to fetch FX rate")
+			fxRate = 1.0
+		}
+
+		// Recalculate USD values
+		stock.CurrentValueUSD = float64(stock.SharesOwned) * stock.CurrentPrice * fxRate
+		costBasis := float64(stock.SharesOwned) * stock.AvgPriceLocal * fxRate
+		stock.UnrealizedPnL = stock.CurrentValueUSD - costBasis
+	}
 
 	// Save to database
 	if err := h.db.Save(&stock).Error; err != nil {
@@ -311,7 +408,7 @@ func (h *StockHandler) UpdateStockField(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info().Str("ticker", stock.Ticker).Str("field", req.Field).Float64("new_value", req.Value).Msg("Stock field manually updated")
+	h.logger.Info().Str("ticker", stock.Ticker).Str("field", req.Field).Msg("Stock field manually updated")
 
 	c.JSON(http.StatusOK, stock)
 }

@@ -34,3 +34,4 @@ go run main.go
 Delete the stock and add it fresh - this will force a new Grok call on creation.
 
 
+

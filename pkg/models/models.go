@@ -48,6 +48,7 @@ type Stock struct {
 	UpdateFrequency        string    `json:"update_frequency"`         // daily/weekly/monthly/manually
 	DataSource             string    `json:"data_source"`              // Source of data (e.g., "Grok", "Alpha Vantage", "Manual")
 	FairValueSource        string    `json:"fair_value_source"`        // Source of fair value (e.g., "TipRanks, Nov 5, 2025")
+	Comment                string    `gorm:"type:text" json:"comment"` // User notes and memos for this stock
 	LastUpdated            time.Time `json:"last_updated"`
 	CreatedAt              time.Time `json:"created_at"`
 	UpdatedAt              time.Time `json:"updated_at"`

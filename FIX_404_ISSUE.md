@@ -33,3 +33,4 @@ SELECT id, ticker, company_name FROM stocks;
 - Refreshing the page fetches fresh data from backend
 
 
+
