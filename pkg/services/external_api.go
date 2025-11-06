@@ -332,7 +332,7 @@ VERIFY: Current price must be LOWER than fair value if upside is positive. Use r
 
 	// Build Grok API request
 	reqBody := GrokStockRequest{
-		Model: "grok-4-latest",
+		Model: "grok-beta",
 		Messages: []Message{
 			{
 				Role:    "system",
