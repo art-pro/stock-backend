@@ -51,6 +51,8 @@ type Stock struct {
 	FairValueSource        string     `json:"fair_value_source"`        // Source of fair value (e.g., "TipRanks, Nov 5, 2025")
 	AlphaVantageFetchedAt  *time.Time `json:"alpha_vantage_fetched_at"` // When data was last fetched from Alpha Vantage
 	GrokFetchedAt          *time.Time `json:"grok_fetched_at"`          // When data was last fetched from Grok
+	AlphaVantageRawJSON    string     `gorm:"type:text" json:"alpha_vantage_raw_json"` // Raw JSON response from Alpha Vantage
+	GrokRawJSON            string     `gorm:"type:text" json:"grok_raw_json"`          // Raw JSON response from Grok
 	Comment                string     `gorm:"type:text" json:"comment"` // User notes and memos for this stock
 	LastUpdated            time.Time  `json:"last_updated"`
 	CreatedAt              time.Time `json:"created_at"`

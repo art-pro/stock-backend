@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/artpro/assessapp/pkg/config"
@@ -14,9 +15,11 @@ import (
 
 // ExternalAPIService handles all external API integrations
 type ExternalAPIService struct {
-	cfg               *config.Config
-	client            *http.Client
-	exchangeRateCache map[string]float64 // Cache for exchange rates from Grok
+	cfg                   *config.Config
+	client                *http.Client
+	exchangeRateCache     map[string]float64 // Cache for exchange rates from Grok
+	lastAlphaVantageCall  time.Time         // Track last API call for rate limiting
+	alphaVantageCallMutex sync.Mutex        // Mutex for thread-safe rate limiting
 }
 
 // AlphaVantageQuote represents Alpha Vantage real-time quote data
@@ -33,6 +36,10 @@ type AlphaVantageQuote struct {
 		Change           string `json:"09. change"`
 		ChangePercent    string `json:"10. change percent"`
 	} `json:"Global Quote"`
+	// Error handling fields
+	Note         string `json:"Note,omitempty"`         // Rate limit message
+	ErrorMessage string `json:"Error Message,omitempty"` // Invalid symbol/API key
+	Information  string `json:"Information,omitempty"`  // API usage info
 }
 
 // AlphaVantageOverview represents company overview data with fundamentals
@@ -58,6 +65,10 @@ type AlphaVantageOverview struct {
 	EVToEBITDA                 string `json:"EVToEBITDA"`
 	QuarterlyEarningsGrowthYOY string `json:"QuarterlyEarningsGrowthYOY"`
 	QuarterlyRevenueGrowthYOY  string `json:"QuarterlyRevenueGrowthYOY"`
+	// Error handling fields
+	Note         string `json:"Note,omitempty"`         // Rate limit message
+	ErrorMessage string `json:"Error Message,omitempty"` // Invalid symbol/API key
+	Information  string `json:"Information,omitempty"`  // API usage info
 }
 
 // NewExternalAPIService creates a new external API service
@@ -67,8 +78,31 @@ func NewExternalAPIService(cfg *config.Config) *ExternalAPIService {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		exchangeRateCache: make(map[string]float64),
+		exchangeRateCache:    make(map[string]float64),
+		lastAlphaVantageCall: time.Time{},
 	}
+}
+
+// enforceAlphaVantageRateLimit ensures we don't exceed 5 calls per minute for free tier
+// Premium tiers: 30 calls/min (75 calls/min for higher tiers)
+func (s *ExternalAPIService) enforceAlphaVantageRateLimit() {
+	s.alphaVantageCallMutex.Lock()
+	defer s.alphaVantageCallMutex.Unlock()
+
+	if !s.lastAlphaVantageCall.IsZero() {
+		timeSinceLastCall := time.Since(s.lastAlphaVantageCall)
+		// Free tier: 5 calls per minute = 1 call every 12 seconds
+		// We use 13 seconds to be safe
+		minInterval := 13 * time.Second
+		
+		if timeSinceLastCall < minInterval {
+			sleepDuration := minInterval - timeSinceLastCall
+			fmt.Printf("⏱ Rate limiting: waiting %.1f seconds before next Alpha Vantage call...\n", sleepDuration.Seconds())
+			time.Sleep(sleepDuration)
+		}
+	}
+	
+	s.lastAlphaVantageCall = time.Now()
 }
 
 // cacheExchangeRate stores an exchange rate from Grok
@@ -117,7 +151,11 @@ func (s *ExternalAPIService) FetchAlphaVantageQuote(ticker string) (*AlphaVantag
 		return nil, fmt.Errorf("Alpha Vantage API key not configured")
 	}
 
-	url := fmt.Sprintf("https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=%s&apikey=%s",
+	// Enforce rate limiting
+	s.enforceAlphaVantageRateLimit()
+
+	// Build URL with proper parameters
+	url := fmt.Sprintf("https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=%s&apikey=%s&datatype=json",
 		ticker, s.cfg.AlphaVantageAPIKey)
 
 	resp, err := s.client.Get(url)
@@ -126,9 +164,41 @@ func (s *ExternalAPIService) FetchAlphaVantageQuote(ticker string) (*AlphaVantag
 	}
 	defer resp.Body.Close()
 
+	// Check for rate limit (Alpha Vantage returns 200 with error message)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+
+	// Read response body for error checking
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check for rate limit error in response
+	if bytes.Contains(body, []byte("API call frequency")) || bytes.Contains(body, []byte("Thank you for using Alpha Vantage")) {
+		return nil, fmt.Errorf("Alpha Vantage rate limit reached (5 calls/minute for free tier)")
+	}
+
+	// Check for invalid API key
+	if bytes.Contains(body, []byte("Invalid API key")) {
+		return nil, fmt.Errorf("invalid Alpha Vantage API key")
+	}
+
 	var quote AlphaVantageQuote
-	if err := json.NewDecoder(resp.Body).Decode(&quote); err != nil {
+	if err := json.Unmarshal(body, &quote); err != nil {
 		return nil, fmt.Errorf("failed to decode quote: %w", err)
+	}
+
+	// Check for structured error responses
+	if quote.Note != "" {
+		return nil, fmt.Errorf("Alpha Vantage rate limit: %s", quote.Note)
+	}
+	if quote.ErrorMessage != "" {
+		return nil, fmt.Errorf("Alpha Vantage error: %s", quote.ErrorMessage)
+	}
+	if quote.Information != "" {
+		fmt.Printf("ℹ️ Alpha Vantage info: %s\n", quote.Information)
 	}
 
 	// Check if we got valid data
@@ -145,7 +215,10 @@ func (s *ExternalAPIService) FetchAlphaVantageOverview(ticker string) (*AlphaVan
 		return nil, fmt.Errorf("Alpha Vantage API key not configured")
 	}
 
-	url := fmt.Sprintf("https://www.alphavantage.co/query?function=OVERVIEW&symbol=%s&apikey=%s",
+	// Enforce rate limiting
+	s.enforceAlphaVantageRateLimit()
+
+	url := fmt.Sprintf("https://www.alphavantage.co/query?function=OVERVIEW&symbol=%s&apikey=%s&datatype=json",
 		ticker, s.cfg.AlphaVantageAPIKey)
 
 	resp, err := s.client.Get(url)
@@ -154,14 +227,46 @@ func (s *ExternalAPIService) FetchAlphaVantageOverview(ticker string) (*AlphaVan
 	}
 	defer resp.Body.Close()
 
+	// Check for rate limit
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+
+	// Read response body for error checking
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check for rate limit error in response
+	if bytes.Contains(body, []byte("API call frequency")) || bytes.Contains(body, []byte("Thank you for using Alpha Vantage")) {
+		return nil, fmt.Errorf("Alpha Vantage rate limit reached (5 calls/minute for free tier)")
+	}
+
+	// Check for invalid API key
+	if bytes.Contains(body, []byte("Invalid API key")) {
+		return nil, fmt.Errorf("invalid Alpha Vantage API key")
+	}
+
 	var overview AlphaVantageOverview
-	if err := json.NewDecoder(resp.Body).Decode(&overview); err != nil {
+	if err := json.Unmarshal(body, &overview); err != nil {
 		return nil, fmt.Errorf("failed to decode overview: %w", err)
+	}
+
+	// Check for structured error responses
+	if overview.Note != "" {
+		return nil, fmt.Errorf("Alpha Vantage rate limit: %s", overview.Note)
+	}
+	if overview.ErrorMessage != "" {
+		return nil, fmt.Errorf("Alpha Vantage error: %s", overview.ErrorMessage)
+	}
+	if overview.Information != "" {
+		fmt.Printf("ℹ️ Alpha Vantage info: %s\n", overview.Information)
 	}
 
 	// Check if we got valid data
 	if overview.Symbol == "" {
-		return nil, fmt.Errorf("no data returned for ticker %s", ticker)
+		return nil, fmt.Errorf("no overview data returned for ticker %s", ticker)
 	}
 
 	return &overview, nil
@@ -657,6 +762,14 @@ func (s *ExternalAPIService) FetchFromAlphaVantage(stock *models.Stock) error {
 		return fmt.Errorf("failed to fetch overview: %w", err)
 	}
 
+	// Store raw JSON responses
+	combinedResponse := map[string]interface{}{
+		"quote":    quote,
+		"overview": overview,
+	}
+	rawJSON, _ := json.MarshalIndent(combinedResponse, "", "  ")
+	stock.AlphaVantageRawJSON = string(rawJSON)
+
 	// Update all available raw data
 	if overview.Beta != "" && overview.Beta != "None" {
 		stock.Beta = parseFloat(overview.Beta)
@@ -799,10 +912,19 @@ Return ONLY valid JSON (no markdown, no extra text):
 		return fmt.Errorf("Grok API returned status: %d, body: %s", resp.StatusCode, string(body))
 	}
 
+	// Read the response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read Grok response: %w", err)
+	}
+
 	var grokResp GrokStockResponse
-	if err := json.NewDecoder(resp.Body).Decode(&grokResp); err != nil {
+	if err := json.Unmarshal(body, &grokResp); err != nil {
 		return fmt.Errorf("failed to decode Grok response: %w", err)
 	}
+
+	// Store the raw Grok response
+	stock.GrokRawJSON = string(body)
 
 	if len(grokResp.Choices) == 0 {
 		return fmt.Errorf("no choices in Grok response")
