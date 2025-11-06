@@ -497,6 +497,7 @@ func (h *StockHandler) UpdateAllStocks(c *gin.Context) {
 // UpdateSingleStock updates a single stock's data
 func (h *StockHandler) UpdateSingleStock(c *gin.Context) {
 	id := c.Param("id")
+	source := c.Query("source") // Optional: "grok", "alphavantage", or "" for auto
 
 	var stock models.Stock
 	if err := h.db.First(&stock, id).Error; err != nil {
@@ -504,7 +505,7 @@ func (h *StockHandler) UpdateSingleStock(c *gin.Context) {
 		return
 	}
 
-	if err := h.updateStockData(&stock); err != nil {
+	if err := h.updateStockDataWithSource(&stock, source); err != nil {
 		h.logger.Warn().Err(err).Str("ticker", stock.Ticker).Msg("Failed to update stock data from API, using mock data")
 		// Don't return error - the updateStockData should have fallback to mock data
 		// Try to at least recalculate metrics with existing data
@@ -515,14 +516,31 @@ func (h *StockHandler) UpdateSingleStock(c *gin.Context) {
 	c.JSON(http.StatusOK, stock)
 }
 
-// updateStockData is a helper function to update stock data from external APIs
+// updateStockData is a helper function to update stock data from external APIs (auto-mode)
 func (h *StockHandler) updateStockData(stock *models.Stock) error {
+	return h.updateStockDataWithSource(stock, "")
+}
+
+// updateStockDataWithSource updates stock data from specified source
+func (h *StockHandler) updateStockDataWithSource(stock *models.Stock, source string) error {
 	// Store old EV for alert comparison
 	oldEV := stock.ExpectedValue
 
-	// Fetch all stock data from Grok in one call (includes ALL calculations!)
-	if err := h.apiService.FetchAllStockData(stock); err != nil {
-		h.logger.Error().Err(err).Str("ticker", stock.Ticker).Msg("⚠️ GROK FETCH FAILED - Check API key and logs above")
+	var err error
+	switch source {
+	case "grok":
+		// Fetch only from Grok (interpretive/analytical data)
+		err = h.apiService.FetchFromGrok(stock)
+	case "alphavantage":
+		// Fetch only from Alpha Vantage (raw financial data)
+		err = h.apiService.FetchFromAlphaVantage(stock)
+	default:
+		// Auto mode: try Alpha Vantage first, then Grok
+		err = h.apiService.FetchAllStockData(stock)
+	}
+
+	if err != nil {
+		h.logger.Error().Err(err).Str("ticker", stock.Ticker).Str("source", source).Msg("⚠️ API FETCH FAILED - Check API key and logs above")
 		// Mock data is already set by the service including all calculations
 		return err
 	}

@@ -203,6 +203,31 @@ type StockAnalysis struct {
 	Assessment          string  `json:"assessment"`
 }
 
+// GrokStockData extends StockAnalysis with additional metadata fields
+type GrokStockData struct {
+	CurrentPrice        float64 `json:"current_price"`
+	FairValue           float64 `json:"fair_value"`
+	Beta                float64 `json:"beta"`
+	Volatility          float64 `json:"volatility"`
+	PERatio             float64 `json:"pe_ratio"`
+	EPSGrowthRate       float64 `json:"eps_growth_rate"`
+	DebtToEBITDA        float64 `json:"debt_to_ebitda"`
+	DividendYield       float64 `json:"dividend_yield"`
+	ProbabilityPositive float64 `json:"probability_positive"`
+	DownsideRisk        float64 `json:"downside_risk"`
+	BRatio              float64 `json:"b_ratio"`
+	UpsidePotential     float64 `json:"upside_potential"`
+	ExpectedValue       float64 `json:"expected_value"`
+	KellyFraction       float64 `json:"kelly_fraction"`
+	HalfKellySuggested  float64 `json:"half_kelly_suggested"`
+	BuyZoneMin          float64 `json:"buy_zone_min"`
+	BuyZoneMax          float64 `json:"buy_zone_max"`
+	Assessment          string  `json:"assessment"`
+	Sector              string  `json:"sector"`
+	FairValueSource     string  `json:"fair_value_source"`
+	DataSource          string  `json:"data_source"`
+}
+
 // FetchAllStockData fetches all stock data using Alpha Vantage (primary) and Grok (analysis)
 func (s *ExternalAPIService) FetchAllStockData(stock *models.Stock) error {
 	var dataSource string
@@ -597,4 +622,232 @@ func (s *ExternalAPIService) FetchAllExchangeRates(currencies []string) (map[str
 	}
 
 	return rates, nil
+}
+
+// FetchFromAlphaVantage fetches ONLY raw financial data from Alpha Vantage
+// Best for: current_price, beta, volatility, P/E, EPS growth, debt/EBITDA, dividend yield
+func (s *ExternalAPIService) FetchFromAlphaVantage(stock *models.Stock) error {
+	if s.cfg.AlphaVantageAPIKey == "" {
+		return fmt.Errorf("Alpha Vantage API key not configured")
+	}
+
+	fmt.Printf("📊 Fetching RAW financial data from Alpha Vantage for %s...\n", stock.Ticker)
+
+	// Fetch current price
+	quote, err := s.FetchAlphaVantageQuote(stock.Ticker)
+	if err != nil {
+		return fmt.Errorf("failed to fetch quote: %w", err)
+	}
+
+	if quote.GlobalQuote.Price == "" {
+		return fmt.Errorf("no price data returned for %s", stock.Ticker)
+	}
+
+	stock.CurrentPrice = parseFloat(quote.GlobalQuote.Price)
+	fmt.Printf("✓ Current price: %.2f\n", stock.CurrentPrice)
+
+	// Fetch fundamentals
+	overview, err := s.FetchAlphaVantageOverview(stock.Ticker)
+	if err != nil {
+		return fmt.Errorf("failed to fetch overview: %w", err)
+	}
+
+	// Update all available raw data
+	if overview.Beta != "" && overview.Beta != "None" {
+		stock.Beta = parseFloat(overview.Beta)
+		fmt.Printf("✓ Beta: %.2f\n", stock.Beta)
+	}
+
+	if overview.AnalystTargetPrice != "" && overview.AnalystTargetPrice != "None" {
+		stock.FairValue = parseFloat(overview.AnalystTargetPrice)
+		stock.FairValueSource = fmt.Sprintf("Alpha Vantage Consensus, %s", time.Now().Format("Jan 2, 2006"))
+		fmt.Printf("✓ Fair value (analyst target): %.2f\n", stock.FairValue)
+	}
+
+	stock.PERatio = parseFloat(overview.PERatio)
+	stock.DividendYield = parseFloat(overview.DividendYield)
+
+	// Calculate EPS growth from quarterly data
+	if overview.QuarterlyEarningsGrowthYOY != "" {
+		stock.EPSGrowthRate = parseFloat(overview.QuarterlyEarningsGrowthYOY) * 100
+	}
+
+	// Update sector if provided
+	if overview.Sector != "" {
+		stock.Sector = overview.Sector
+	}
+
+	// Set data source
+	stock.DataSource = "Alpha Vantage (Raw Data)"
+
+	// Calculate all derived metrics (EV, Kelly, assessment, etc.)
+	CalculateMetrics(stock)
+	stock.LastUpdated = time.Now()
+
+	fmt.Printf("✅ Alpha Vantage fetch complete for %s\n", stock.Ticker)
+	return nil
+}
+
+// FetchFromGrok fetches ONLY analytical/interpretive data from Grok
+// Best for: fair_value (consensus), probability (p), EV, Kelly, downside risk, assessment, recommendations
+func (s *ExternalAPIService) FetchFromGrok(stock *models.Stock) error {
+	if s.cfg.XAIAPIKey == "" {
+		return fmt.Errorf("Grok API key not configured")
+	}
+
+	fmt.Printf("🤖 Fetching ANALYTICAL data from Grok for %s...\n", stock.Ticker)
+
+	// Create comprehensive prompt for Grok focusing on analytical data
+	prompt := fmt.Sprintf(`You are a financial analyst following a strict probabilistic investment strategy. The core philosophy is built on probabilistic thinking, expected value (EV) optimization, and ½-Kelly sizing to maximize long-term growth while minimizing ruin probability.
+
+Key principles:
+
+1. Probabilistic Thinking: Assign probabilities to scenarios (growth, stagnation, decline) rather than binary outcomes.
+
+2. Expected Value (EV): Calculate EV = (p × upside %%) + ((1 - p) × downside %%). Only hold if EV > 0%%, add if >7%%, trim if <3%%, sell if <0%%.
+
+3. Kelly Criterion: f* = [(b × p) - q] / b, where b = upside %% / |downside %%|, q = 1 - p. Use ½-Kelly for sizing, capped at 15%% for high-conviction/low-vol assets (typical 3–6%%).
+
+4. Sector targets: Healthcare 30–35%%, Technology 15%%, Energy 8–10%%, Financials 5–7%%, Industrials 3–4%%, Consumer Staples 8–10%%, REITs 5–7%%, Cash 8–12%%.
+
+Analyze the stock %s (%s) in the %s sector with currency %s.
+
+CRITICAL REQUIREMENTS:
+- "current_price" = ACTUAL REAL-TIME TRADING PRICE on the stock exchange (what you can buy TODAY)
+- "fair_value" = MEDIAN ANALYST CONSENSUS TARGET PRICE (12-month target from TipRanks/Yahoo Finance/Bloomberg)
+- These are DIFFERENT values. Current price is TODAY's market price. Fair value is FUTURE analyst target.
+- Use p=0.65 as default probability (adjust based on analyst ratings: 0.7 for Strong Buy, 0.65 for Buy, 0.5 for Hold)
+- Calibrate downside by beta: <0.5 = -15%%, 0.5-1 = -20%%, 1-1.5 = -25%%, >1.5 = -30%%
+- Buy zone: typically 85-95%% of current price or where EV >15%%
+
+IMPORTANT FORMULAS:
+1. upside_potential = ((fair_value - current_price) / current_price) × 100
+2. b = upside_potential / |downside_risk|
+3. expected_value = (probability_positive × upside_potential) + ((1 - probability_positive) × downside_risk)
+4. kelly_fraction = ((b × probability_positive) - (1 - probability_positive)) / b
+5. half_kelly_suggested = (kelly_fraction / 2), capped at 15%%
+
+Return ONLY valid JSON (no markdown, no extra text):
+{
+  "current_price": <actual trading price TODAY>,
+  "fair_value": <12-month analyst consensus target>,
+  "beta": <market sensitivity>,
+  "volatility": <annualized %% std dev>,
+  "probability_positive": <0.5-0.7 based on ratings/fundamentals>,
+  "downside_risk": <negative %%, e.g. -20>,
+  "upside_potential": <positive %%>,
+  "expected_value": <EV %%>,
+  "b_ratio": <upside/|downside|>,
+  "kelly_fraction": <optimal %% uncapped>,
+  "half_kelly_suggested": <conservative %% capped at 15>,
+  "buy_zone_min": <lower price bound>,
+  "buy_zone_max": <upper price bound>,
+  "assessment": "<Add/Hold/Trim/Sell>",
+  "pe_ratio": <trailing P/E>,
+  "eps_growth_rate": <YoY %%>,
+  "debt_to_ebitda": <leverage ratio>,
+  "dividend_yield": <%%>,
+  "sector": "%s",
+  "currency": "%s",
+  "exchange_rate_to_usd": <rate if non-USD>,
+  "fair_value_source": "<source, date>",
+  "data_source": "Grok AI"
+}`, stock.Ticker, stock.CompanyName, stock.Sector, stock.Currency, stock.Sector, stock.Currency)
+
+	req := GrokStockRequest{
+		Model: "grok-4-fast-reasoning",
+		Messages: []Message{
+			{
+				Role:    "user",
+				Content: prompt,
+			},
+		},
+		Stream: false,
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", "https://api.x.ai/v1/chat/completions", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+s.cfg.XAIAPIKey)
+
+	resp, err := s.client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("failed to call Grok API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Grok API returned status: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var grokResp GrokStockResponse
+	if err := json.NewDecoder(resp.Body).Decode(&grokResp); err != nil {
+		return fmt.Errorf("failed to decode Grok response: %w", err)
+	}
+
+	if len(grokResp.Choices) == 0 {
+		return fmt.Errorf("no choices in Grok response")
+	}
+
+	content := grokResp.Choices[0].Message.Content
+
+	// Extract JSON from markdown code blocks if present
+	if bytes.Contains([]byte(content), []byte("```json")) {
+		start := bytes.Index([]byte(content), []byte("```json")) + 7
+		end := bytes.LastIndex([]byte(content), []byte("```"))
+		if start > 7 && end > start {
+			content = string([]byte(content)[start:end])
+		}
+	}
+
+	var data GrokStockData
+	if err := json.Unmarshal([]byte(content), &data); err != nil {
+		return fmt.Errorf("failed to parse Grok JSON: %w, content: %s", err, content)
+	}
+
+	// Update stock with Grok data
+	stock.CurrentPrice = data.CurrentPrice
+	stock.FairValue = data.FairValue
+	stock.Beta = data.Beta
+	stock.Volatility = data.Volatility
+	stock.ProbabilityPositive = data.ProbabilityPositive
+	stock.DownsideRisk = data.DownsideRisk
+	stock.UpsidePotential = data.UpsidePotential
+	stock.ExpectedValue = data.ExpectedValue
+	stock.BRatio = data.BRatio
+	stock.KellyFraction = data.KellyFraction
+	stock.HalfKellySuggested = data.HalfKellySuggested
+	stock.BuyZoneMin = data.BuyZoneMin
+	stock.BuyZoneMax = data.BuyZoneMax
+	stock.Assessment = data.Assessment
+	stock.PERatio = data.PERatio
+	stock.EPSGrowthRate = data.EPSGrowthRate
+	stock.DebtToEBITDA = data.DebtToEBITDA
+	stock.DividendYield = data.DividendYield
+	
+	if data.Sector != "" {
+		stock.Sector = data.Sector
+	}
+	
+	stock.DataSource = "Grok AI (Analytical)"
+	if data.FairValueSource != "" {
+		stock.FairValueSource = data.FairValueSource
+	}
+
+	stock.LastUpdated = time.Now()
+
+	fmt.Printf("✅ Grok fetch complete for %s\n", stock.Ticker)
+	fmt.Printf("   Current Price: %.2f, Fair Value: %.2f, EV: %.1f%%, Assessment: %s\n",
+		stock.CurrentPrice, stock.FairValue, stock.ExpectedValue, stock.Assessment)
+
+	return nil
 }
