@@ -1,7 +1,7 @@
 package config
 
 const (
-	Version = "1.2.0"
-	BuildDate = "2025-11-06"
+	Version = "1.3.0"
+	BuildDate = "2025-11-07"
 )
 
