@@ -74,6 +74,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 		protected.DELETE("/stocks/:id", stockHandler.DeleteStock)
 		protected.POST("/stocks/update-all", stockHandler.UpdateAllStocks)
 		protected.POST("/stocks/:id/update", stockHandler.UpdateSingleStock)
+		protected.POST("/stocks/bulk-update", stockHandler.BulkUpdateStocks)
 
 		// Stock history routes
 		protected.GET("/stocks/:id/history", stockHandler.GetStockHistory)

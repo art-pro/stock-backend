@@ -808,3 +808,241 @@ func (h *StockHandler) ImportCSV(c *gin.Context) {
 		"skipped":  skipped,
 	})
 }
+
+// BulkUpdateRequest represents the request for bulk stock updates
+type BulkUpdateRequest struct {
+	Stocks []BulkStockData `json:"stocks" binding:"required"`
+}
+
+// BulkStockData represents stock data for bulk update
+type BulkStockData struct {
+	Ticker              string  `json:"ticker" binding:"required"`
+	CompanyName         string  `json:"company_name" binding:"required"`
+	ISIN                string  `json:"isin"`
+	Sector              string  `json:"sector"`
+	CurrentPrice        float64 `json:"current_price"`
+	Currency            string  `json:"currency"`
+	FairValue           float64 `json:"fair_value"`
+	UpsidePotential     float64 `json:"upside_potential"`
+	DownsideRisk        float64 `json:"downside_risk"`
+	ProbabilityPositive float64 `json:"probability_positive"`
+	ExpectedValue       float64 `json:"expected_value"`
+	Beta                float64 `json:"beta"`
+	Volatility          float64 `json:"volatility"`
+	PERatio             float64 `json:"pe_ratio"`
+	EPSGrowthRate       float64 `json:"eps_growth_rate"`
+	DebtToEBITDA        float64 `json:"debt_to_ebitda"`
+	DividendYield       float64 `json:"dividend_yield"`
+	BRatio              float64 `json:"b_ratio"`
+	KellyFraction       float64 `json:"kelly_fraction"`
+	HalfKellySuggested  float64 `json:"half_kelly_suggested"`
+	SharesOwned         int     `json:"shares_owned"`
+	AvgPriceLocal       float64 `json:"avg_price_local"`
+	BuyZoneMin          float64 `json:"buy_zone_min"`
+	BuyZoneMax          float64 `json:"buy_zone_max"`
+	Assessment          string  `json:"assessment"`
+	UpdateFrequency     string  `json:"update_frequency"`
+	DataSource          string  `json:"data_source"`
+	FairValueSource     string  `json:"fair_value_source"`
+	Comment             string  `json:"comment"`
+}
+
+// BulkUpdateStocks handles bulk stock updates from JSON
+func (h *StockHandler) BulkUpdateStocks(c *gin.Context) {
+	var req BulkUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Error().Err(err).Msg("Invalid JSON request")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
+		return
+	}
+
+	updated := 0
+	created := 0
+	errors := []string{}
+
+	for _, stockData := range req.Stocks {
+		var existing models.Stock
+		err := h.db.Where("ticker = ?", stockData.Ticker).First(&existing).Error
+		
+		if err == gorm.ErrRecordNotFound {
+			// Create new stock
+			stock := models.Stock{
+				Ticker:              stockData.Ticker,
+				CompanyName:         stockData.CompanyName,
+				ISIN:                stockData.ISIN,
+				Sector:              stockData.Sector,
+				CurrentPrice:        stockData.CurrentPrice,
+				Currency:            stockData.Currency,
+				FairValue:           stockData.FairValue,
+				UpsidePotential:     stockData.UpsidePotential,
+				DownsideRisk:        stockData.DownsideRisk,
+				ProbabilityPositive: stockData.ProbabilityPositive,
+				ExpectedValue:       stockData.ExpectedValue,
+				Beta:                stockData.Beta,
+				Volatility:          stockData.Volatility,
+				PERatio:             stockData.PERatio,
+				EPSGrowthRate:       stockData.EPSGrowthRate,
+				DebtToEBITDA:        stockData.DebtToEBITDA,
+				DividendYield:       stockData.DividendYield,
+				BRatio:              stockData.BRatio,
+				KellyFraction:       stockData.KellyFraction,
+				HalfKellySuggested:  stockData.HalfKellySuggested,
+				SharesOwned:         stockData.SharesOwned,
+				AvgPriceLocal:       stockData.AvgPriceLocal,
+				BuyZoneMin:          stockData.BuyZoneMin,
+				BuyZoneMax:          stockData.BuyZoneMax,
+				Assessment:          stockData.Assessment,
+				UpdateFrequency:     stockData.UpdateFrequency,
+				DataSource:          stockData.DataSource,
+				FairValueSource:     stockData.FairValueSource,
+				Comment:             stockData.Comment,
+				LastUpdated:         time.Now(),
+			}
+			
+			// Set default currency if not provided
+			if stock.Currency == "" {
+				stock.Currency = "USD"
+			}
+			
+			// Set default update frequency if not provided
+			if stock.UpdateFrequency == "" {
+				stock.UpdateFrequency = "daily"
+			}
+			
+			// Calculate additional fields if possible
+			if stock.SharesOwned > 0 && stock.CurrentPrice > 0 {
+				stock.CurrentValueUSD = float64(stock.SharesOwned) * stock.CurrentPrice
+				if stock.AvgPriceLocal > 0 {
+					stock.UnrealizedPnL = stock.CurrentValueUSD - (float64(stock.SharesOwned) * stock.AvgPriceLocal)
+				}
+			}
+			
+			if err := h.db.Create(&stock).Error; err != nil {
+				errors = append(errors, "Failed to create "+stockData.Ticker+": "+err.Error())
+				continue
+			}
+			created++
+		} else if err == nil {
+			// Update existing stock
+			existing.CompanyName = stockData.CompanyName
+			if stockData.ISIN != "" {
+				existing.ISIN = stockData.ISIN
+			}
+			if stockData.Sector != "" {
+				existing.Sector = stockData.Sector
+			}
+			if stockData.CurrentPrice > 0 {
+				existing.CurrentPrice = stockData.CurrentPrice
+			}
+			if stockData.Currency != "" {
+				existing.Currency = stockData.Currency
+			}
+			if stockData.FairValue > 0 {
+				existing.FairValue = stockData.FairValue
+			}
+			if stockData.UpsidePotential != 0 {
+				existing.UpsidePotential = stockData.UpsidePotential
+			}
+			if stockData.DownsideRisk != 0 {
+				existing.DownsideRisk = stockData.DownsideRisk
+			}
+			if stockData.ProbabilityPositive > 0 {
+				existing.ProbabilityPositive = stockData.ProbabilityPositive
+			}
+			if stockData.ExpectedValue != 0 {
+				existing.ExpectedValue = stockData.ExpectedValue
+			}
+			if stockData.Beta != 0 {
+				existing.Beta = stockData.Beta
+			}
+			if stockData.Volatility != 0 {
+				existing.Volatility = stockData.Volatility
+			}
+			if stockData.PERatio != 0 {
+				existing.PERatio = stockData.PERatio
+			}
+			if stockData.EPSGrowthRate != 0 {
+				existing.EPSGrowthRate = stockData.EPSGrowthRate
+			}
+			if stockData.DebtToEBITDA != 0 {
+				existing.DebtToEBITDA = stockData.DebtToEBITDA
+			}
+			if stockData.DividendYield != 0 {
+				existing.DividendYield = stockData.DividendYield
+			}
+			if stockData.BRatio != 0 {
+				existing.BRatio = stockData.BRatio
+			}
+			if stockData.KellyFraction != 0 {
+				existing.KellyFraction = stockData.KellyFraction
+			}
+			if stockData.HalfKellySuggested != 0 {
+				existing.HalfKellySuggested = stockData.HalfKellySuggested
+			}
+			if stockData.SharesOwned >= 0 {
+				existing.SharesOwned = stockData.SharesOwned
+			}
+			if stockData.AvgPriceLocal > 0 {
+				existing.AvgPriceLocal = stockData.AvgPriceLocal
+			}
+			if stockData.BuyZoneMin > 0 {
+				existing.BuyZoneMin = stockData.BuyZoneMin
+			}
+			if stockData.BuyZoneMax > 0 {
+				existing.BuyZoneMax = stockData.BuyZoneMax
+			}
+			if stockData.Assessment != "" {
+				existing.Assessment = stockData.Assessment
+			}
+			if stockData.UpdateFrequency != "" {
+				existing.UpdateFrequency = stockData.UpdateFrequency
+			}
+			if stockData.DataSource != "" {
+				existing.DataSource = stockData.DataSource
+			}
+			if stockData.FairValueSource != "" {
+				existing.FairValueSource = stockData.FairValueSource
+			}
+			if stockData.Comment != "" {
+				existing.Comment = stockData.Comment
+			}
+			
+			// Recalculate value fields
+			if existing.SharesOwned > 0 && existing.CurrentPrice > 0 {
+				existing.CurrentValueUSD = float64(existing.SharesOwned) * existing.CurrentPrice
+				if existing.AvgPriceLocal > 0 {
+					existing.UnrealizedPnL = existing.CurrentValueUSD - (float64(existing.SharesOwned) * existing.AvgPriceLocal)
+				}
+			}
+			
+			existing.LastUpdated = time.Now()
+			
+			if err := h.db.Save(&existing).Error; err != nil {
+				errors = append(errors, "Failed to update "+stockData.Ticker+": "+err.Error())
+				continue
+			}
+			updated++
+		} else {
+			errors = append(errors, "Error checking "+stockData.Ticker+": "+err.Error())
+		}
+	}
+
+	response := gin.H{
+		"message": "Bulk update completed",
+		"created": created,
+		"updated": updated,
+		"total":   len(req.Stocks),
+	}
+	
+	if len(errors) > 0 {
+		response["errors"] = errors
+	}
+	
+	h.logger.Info().
+		Int("created", created).
+		Int("updated", updated).
+		Int("total", len(req.Stocks)).
+		Msg("Bulk stock update completed")
+	
+	c.JSON(http.StatusOK, response)
+}
