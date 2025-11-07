@@ -111,6 +111,18 @@ type Alert struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// ExchangeRate represents currency exchange rates
+type ExchangeRate struct {
+	ID           uint      `gorm:"primarykey" json:"id"`
+	CurrencyCode string    `gorm:"unique;not null" json:"currency_code"` // EUR, USD, DKK, GBP, RUB, etc.
+	Rate         float64   `json:"rate"`                                  // Rate relative to EUR (base currency)
+	LastUpdated  time.Time `json:"last_updated"`
+	IsActive     bool      `json:"is_active" gorm:"default:true"`        // Whether this currency is actively used
+	IsManual     bool      `json:"is_manual" gorm:"default:false"`       // Whether rate is manually set
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 // BeforeCreate hook for Stock to set defaults
 func (s *Stock) BeforeCreate(tx *gorm.DB) error {
 	if s.UpdateFrequency == "" {

@@ -14,19 +14,21 @@ import (
 
 // PortfolioHandler handles portfolio-related requests
 type PortfolioHandler struct {
-	db         *gorm.DB
-	cfg        *config.Config
-	logger     zerolog.Logger
-	apiService *services.ExternalAPIService
+	db                  *gorm.DB
+	cfg                 *config.Config
+	logger              zerolog.Logger
+	apiService          *services.ExternalAPIService
+	exchangeRateService *services.ExchangeRateService
 }
 
 // NewPortfolioHandler creates a new portfolio handler
 func NewPortfolioHandler(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *PortfolioHandler {
 	return &PortfolioHandler{
-		db:         db,
-		cfg:        cfg,
-		logger:     logger,
-		apiService: services.NewExternalAPIService(cfg),
+		db:                  db,
+		cfg:                 cfg,
+		logger:              logger,
+		apiService:          services.NewExternalAPIService(cfg),
+		exchangeRateService: services.NewExchangeRateService(db, logger),
 	}
 }
 
@@ -39,24 +41,17 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 		return
 	}
 
-	// Get unique currencies
-	currencyMap := make(map[string]bool)
-	for _, stock := range stocks {
-		currencyMap[stock.Currency] = true
-	}
-
-	var currencies []string
-	for currency := range currencyMap {
-		currencies = append(currencies, currency)
-	}
-
-	// Fetch exchange rates
-	fxRates, err := h.apiService.FetchAllExchangeRates(currencies)
+	// Fetch exchange rates from our exchange rate service
+	fxRates, err := h.exchangeRateService.GetRatesMap()
 	if err != nil {
-		h.logger.Warn().Err(err).Msg("Failed to fetch exchange rates")
-		// Continue with default rates
+		h.logger.Warn().Err(err).Msg("Failed to fetch exchange rates from database")
+		// Use fallback rates
 		fxRates = make(map[string]float64)
-		fxRates["USD"] = 1.0
+		fxRates["EUR"] = 1.0
+		fxRates["USD"] = 1.154
+		fxRates["DKK"] = 7.4604
+		fxRates["GBP"] = 0.8796
+		fxRates["RUB"] = 93.7594
 	}
 
 	// Calculate portfolio metrics
@@ -64,13 +59,19 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 
 	// Update weights for each stock
 	for i := range stocks {
+		if stocks[i].SharesOwned <= 0 {
+			continue
+		}
+		
 		fxRate := fxRates[stocks[i].Currency]
 		if fxRate == 0 {
 			fxRate = 1.0
 		}
-		valueUSD := float64(stocks[i].SharesOwned) * stocks[i].CurrentPrice * fxRate
+		// Convert to EUR (base currency)
+		valueEUR := float64(stocks[i].SharesOwned) * stocks[i].CurrentPrice / fxRate
 		if metrics.TotalValue > 0 {
-			stocks[i].Weight = (valueUSD / metrics.TotalValue) * 100
+			stocks[i].Weight = (valueEUR / metrics.TotalValue) * 100
+			stocks[i].CurrentValueUSD = valueEUR * fxRates["USD"] // Store in USD for backward compatibility
 			h.db.Save(&stocks[i])
 		}
 	}

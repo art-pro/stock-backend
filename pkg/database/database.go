@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/artpro/assessapp/pkg/models"
 	"golang.org/x/crypto/bcrypt"
@@ -64,11 +65,39 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&models.DeletedStock{},
 		&models.PortfolioSettings{},
 		&models.Alert{},
+		&models.ExchangeRate{},
 	); err != nil {
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
+	// Initialize default exchange rates
+	InitializeExchangeRates(db)
+	
 	return db, nil
+}
+
+// InitializeExchangeRates creates default exchange rates if they don't exist
+func InitializeExchangeRates(db *gorm.DB) error {
+	defaultRates := []models.ExchangeRate{
+		{CurrencyCode: "EUR", Rate: 1.0, IsActive: true},       // Base currency
+		{CurrencyCode: "USD", Rate: 1.154, IsActive: true},     // Default rate
+		{CurrencyCode: "DKK", Rate: 7.4604, IsActive: true},    // Default rate
+		{CurrencyCode: "GBP", Rate: 0.8796, IsActive: true},    // Default rate
+		{CurrencyCode: "RUB", Rate: 93.7594, IsActive: true},   // Default rate
+	}
+	
+	for _, rate := range defaultRates {
+		var existing models.ExchangeRate
+		result := db.Where("currency_code = ?", rate.CurrencyCode).First(&existing)
+		if result.Error == gorm.ErrRecordNotFound {
+			rate.LastUpdated = time.Now()
+			if err := db.Create(&rate).Error; err != nil {
+				return fmt.Errorf("failed to create exchange rate for %s: %w", rate.CurrencyCode, err)
+			}
+		}
+	}
+	
+	return nil
 }
 
 // InitializeAdminUser creates the admin user if it doesn't exist

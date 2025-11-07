@@ -110,45 +110,55 @@ func CalculateMetrics(stock *models.Stock) {
 // CalculatePortfolioMetrics calculates portfolio-level metrics
 func CalculatePortfolioMetrics(stocks []models.Stock, fxRates map[string]float64) PortfolioMetrics {
 	var totalValue float64
-	var weightedEV float64
-	var weightedVolatility float64
-	sectorWeights := make(map[string]float64)
-
-	for _, stock := range stocks {
+	stockValues := make([]float64, len(stocks))
+	
+	// First pass: Calculate total portfolio value
+	for i, stock := range stocks {
+		// Skip stocks with no shares owned
+		if stock.SharesOwned <= 0 {
+			continue
+		}
+		
 		// Calculate position value in USD
 		fxRate := fxRates[stock.Currency]
 		if fxRate == 0 {
 			fxRate = 1.0 // Default to 1 if no rate available (assume USD)
 		}
 
-		valueUSD := float64(stock.SharesOwned) * stock.CurrentPrice * fxRate
+		valueUSD := float64(stock.SharesOwned) * stock.CurrentPrice / fxRate
+		stockValues[i] = valueUSD
 		totalValue += valueUSD
+	}
 
-		// Accumulate weighted metrics
-		weight := valueUSD / totalValue
-		weightedEV += stock.ExpectedValue * weight
-		weightedVolatility += stock.Volatility * weight
-
-		// Accumulate sector weights
-		sectorWeights[stock.Sector] += weight * 100
+	// Second pass: Calculate weighted metrics with correct total
+	var weightedEV float64
+	var weightedVolatility float64
+	sectorWeights := make(map[string]float64)
+	kellyUtilization := 0.0
+	
+	for i, stock := range stocks {
+		// Skip stocks with no shares owned
+		if stock.SharesOwned <= 0 {
+			continue
+		}
+		
+		if totalValue > 0 && stockValues[i] > 0 {
+			weight := stockValues[i] / totalValue
+			weightedEV += stock.ExpectedValue * weight
+			weightedVolatility += stock.Volatility * weight
+			
+			// Accumulate sector weights
+			sectorWeights[stock.Sector] += weight * 100
+			
+			// Kelly utilization is sum of actual weights
+			kellyUtilization += weight * 100
+		}
 	}
 
 	// Calculate Sharpe Ratio (simplified: EV / Volatility)
 	sharpeRatio := 0.0
 	if weightedVolatility > 0 {
 		sharpeRatio = weightedEV / weightedVolatility
-	}
-
-	// Calculate Kelly Utilization (sum of half-Kelly weights)
-	kellyUtilization := 0.0
-	for _, stock := range stocks {
-		fxRate := fxRates[stock.Currency]
-		if fxRate == 0 {
-			fxRate = 1.0
-		}
-		valueUSD := float64(stock.SharesOwned) * stock.CurrentPrice * fxRate
-		weight := (valueUSD / totalValue) * 100
-		kellyUtilization += weight
 	}
 
 	return PortfolioMetrics{
