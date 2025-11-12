@@ -165,7 +165,7 @@ func (h *AssessmentHandler) generateGrokAssessment(ticker string) (string, error
 		"messages": []map[string]string{
 			{
 				"role":    "system",
-				"content": "You are a financial advisor and investment consultant using a probabilistic strategy. You provide detailed stock analysis following the Kelly Criterion framework. Always provide complete, structured analysis.",
+				"content": "You are a financial advisor and investment consultant using a probabilistic strategy. You provide detailed stock analysis following the Kelly Criterion framework. Always provide complete, structured analysis. Use the most recent market data available and indicate data freshness in your analysis.",
 			},
 			{
 				"role":    "user",
@@ -254,7 +254,7 @@ func (h *AssessmentHandler) generateDeepseekAssessment(ticker string) (string, e
 		"messages": []map[string]string{
 			{
 				"role":    "system",
-				"content": "You are a financial advisor and investment consultant using a probabilistic strategy. You provide detailed stock analysis following the Kelly Criterion framework. Always provide complete, structured analysis.",
+				"content": "You are a financial advisor and investment consultant using a probabilistic strategy. You provide detailed stock analysis following the Kelly Criterion framework. Always provide complete, structured analysis. Use the most recent market data available and indicate data freshness in your analysis.",
 			},
 			{
 				"role":    "user",
@@ -418,7 +418,14 @@ func (h *AssessmentHandler) buildPortfolioContext(portfolio []models.Stock, cash
 func (h *AssessmentHandler) buildAssessmentPrompt(ticker string, portfolio []models.Stock, cashHoldings []models.CashHolding) string {
 	// Build portfolio context string
 	portfolioContext := h.buildPortfolioContext(portfolio, cashHoldings)
-	return fmt.Sprintf(`You are a financial advisor and investment consultant using a probabilistic strategy. For the stock %s, follow these steps:
+	// Get current date
+	currentDate := time.Now().Format("January 2, 2006")
+	
+	return fmt.Sprintf(`CURRENT DATE: %s
+
+IMPORTANT: Please use the most recent available market data and financial information. Access current stock prices, latest quarterly earnings, recent analyst reports, and up-to-date fundamental metrics. If any data appears outdated, please indicate when the information was last updated.
+
+You are a financial advisor and investment consultant using a probabilistic strategy. For the stock %s, follow these steps:
 
 1. Collect data: current price, fair value (median consensus target), upside %% = ((fair value - current price) / current price) * 100, downside %% (calibrate by beta: -15%% <0.5, -20%% 0.5–1, -25%% 1–1.5, -30%% >1.5), p (0.5–0.7 based on ratings), volatility, P/E, EPS growth, debt-to-EBITDA, dividend yield.
 
@@ -500,7 +507,7 @@ Please provide a detailed assessment for %s following the template format simila
 
 Use real market data and provide specific numbers for all calculations. Be conservative with probability estimates and avoid hype.
 
-%s`, ticker, ticker, portfolioContext)
+%s`, currentDate, ticker, ticker, portfolioContext)
 }
 
 // cleanupOldAssessments removes assessments beyond the most recent 20
