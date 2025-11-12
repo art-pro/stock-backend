@@ -67,6 +67,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&models.Alert{},
 		&models.ExchangeRate{},
 		&models.CashHolding{},
+		&models.Assessment{},
 	); err != nil {
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
