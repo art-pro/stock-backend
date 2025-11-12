@@ -4,7 +4,6 @@ import (
 	"github.com/artpro/assessapp/pkg/api/handlers"
 	"github.com/artpro/assessapp/pkg/config"
 	"github.com/artpro/assessapp/pkg/middleware"
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
