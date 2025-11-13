@@ -69,27 +69,26 @@ func CalculateMetrics(stock *models.Stock) {
 	}
 
 	// 8. Determine Assessment based on EV
-	// Strategy rules: EV > 7% = Add, EV > 0% = Hold, EV < -3% = Sell, else Trim
+	// Strategy rules: Add: EV > 7%, Hold: EV > 0%, Trim: EV < 3%, Sell: EV < 0%
 	if stock.ExpectedValue > 7 {
 		stock.Assessment = "Add"
 	} else if stock.ExpectedValue > 0 {
 		stock.Assessment = "Hold"
-	} else if stock.ExpectedValue > -3 {
-		stock.Assessment = "Trim"
-	} else {
+	} else if stock.ExpectedValue < 0 {
 		stock.Assessment = "Sell"
+	} else {
+		stock.Assessment = "Trim"
 	}
 
-	// Calculate Buy Zone (approximate range where EV > 7%)
-	// This is a simplified calculation - could be refined with more complex modeling
+	// Calculate Buy Zone (approximate range where EV = 7%)
+	// This calculates the price where EV would equal 7% (threshold for "Add" assessment)
 	if stock.FairValue > 0 && stock.ProbabilityPositive > 0 {
-		// Find price where EV would be ~15% (attractive entry)
+		// Find price where EV would be 7% (attractive entry threshold)
 		// Working backwards from EV formula: EV = p * ((FV - P)/P * 100) + (1-p) * downside
-		// For attractive entry, we want EV >= 15%
-		targetEV := 15.0
+		// For attractive entry, we want EV = 7%
+		targetEV := 7.0
 
 		// Calculate the price where upside potential gives us target EV
-		// Assuming downside risk stays proportional to current estimate
 		// targetEV = p * upside + (1-p) * downside
 		// Solve for upside: upside = (targetEV - (1-p)*downside) / p
 		requiredUpside := (targetEV - (1-stock.ProbabilityPositive)*stock.DownsideRisk) / stock.ProbabilityPositive
