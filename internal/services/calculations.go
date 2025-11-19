@@ -8,7 +8,24 @@ import (
 
 // CalculateMetrics calculates all derived metrics for a stock
 // These formulas implement the investment strategy's Kelly criterion and EV approach
+// CalculateMetrics calculates all derived metrics for a stock
+// These formulas implement the investment strategy's Kelly criterion and EV approach
 func CalculateMetrics(stock *models.Stock) {
+	// 1. Calculate Downside Risk based on Beta
+	// If Beta < 0.5:    Downside % = -15%
+	// If Beta 0.5–1:    Downside % = -20%
+	// If Beta 1–1.5:    Downside % = -25%
+	// If Beta > 1.5:    Downside % = -30%
+	if stock.Beta < 0.5 {
+		stock.DownsideRisk = -15.0
+	} else if stock.Beta >= 0.5 && stock.Beta < 1.0 {
+		stock.DownsideRisk = -20.0
+	} else if stock.Beta >= 1.0 && stock.Beta < 1.5 {
+		stock.DownsideRisk = -25.0
+	} else {
+		stock.DownsideRisk = -30.0
+	}
+
 	// Calculate Upside Potential (%)
 	// Formula: ((Fair Value - Current Price) / Current Price) * 100
 	if stock.CurrentPrice > 0 {
@@ -44,38 +61,41 @@ func CalculateMetrics(stock *models.Stock) {
 	}
 
 	// Determine Assessment based on EV
-	// Strategy rules: EV > 7% = Add, EV > 0% = Hold, EV < 0% = Trim/Sell
+	// Strategy rules:
+	// Add:     EV > 7%
+	// Hold:    EV 3% - 7%
+	// Trim:    EV 0% - 3%
+	// Sell:    EV < 0%
 	if stock.ExpectedValue > 7 {
 		stock.Assessment = "Add"
-	} else if stock.ExpectedValue > 0 {
+	} else if stock.ExpectedValue >= 3 {
 		stock.Assessment = "Hold"
-	} else if stock.ExpectedValue > -5 {
+	} else if stock.ExpectedValue >= 0 {
 		stock.Assessment = "Trim"
 	} else {
 		stock.Assessment = "Sell"
 	}
 
-	// Calculate Buy Zone (approximate range where EV > 7%)
-	// This is a simplified calculation - could be refined with more complex modeling
+	// Calculate Buy Zone
+	// Buy Zone Max Price = Price where EV = 7%
 	if stock.FairValue > 0 && stock.ProbabilityPositive > 0 {
-		// Find price where EV would be ~15% (attractive entry)
+		// Find price where EV would be 7% (attractive entry)
 		// Working backwards from EV formula: EV = p * ((FV - P)/P * 100) + (1-p) * downside
-		// For attractive entry, we want EV >= 15%
-		targetEV := 15.0
+		// We use the calculated downside risk (which assumes Beta stays constant)
+		targetEV := 7.0
 
 		// Calculate the price where upside potential gives us target EV
-		// Assuming downside risk stays proportional to current estimate
 		// targetEV = p * upside + (1-p) * downside
 		// Solve for upside: upside = (targetEV - (1-p)*downside) / p
 		requiredUpside := (targetEV - (1-stock.ProbabilityPositive)*stock.DownsideRisk) / stock.ProbabilityPositive
 
 		// upside = ((FV - P) / P) * 100, solve for P
 		// P = FV / (1 + upside/100)
-		if requiredUpside > 0 {
+		if requiredUpside > -100 { // Avoid division by zero or negative price issues
 			stock.BuyZoneMax = stock.FairValue / (1 + requiredUpside/100)
 			stock.BuyZoneMin = stock.BuyZoneMax * 0.90 // 10% range below max
 		} else {
-			// Fallback to simple percentage if calculation doesn't work
+			// Fallback if calculation yields impossible results
 			stock.BuyZoneMin = stock.CurrentPrice * 0.85
 			stock.BuyZoneMax = stock.CurrentPrice * 0.95
 		}
