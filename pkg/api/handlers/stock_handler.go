@@ -446,6 +446,7 @@ func (h *StockHandler) DeleteStock(c *gin.Context) {
 
 	// Create deleted stock entry
 	deletedStock := models.DeletedStock{
+		PortfolioID: stock.PortfolioID,
 		StockData:   string(stockData),
 		Ticker:      stock.Ticker,
 		CompanyName: stock.CompanyName,
