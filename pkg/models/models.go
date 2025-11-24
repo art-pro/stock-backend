@@ -18,6 +18,7 @@ type User struct {
 // Stock represents a stock in the portfolio with all tracking metrics
 type Stock struct {
 	ID                     uint      `gorm:"primarykey" json:"id"`
+	PortfolioID            uint      `gorm:"not null;index" json:"portfolio_id"`
 	Ticker                 string    `gorm:"not null;index" json:"ticker"`
 	ISIN                   string    `gorm:"index" json:"isin"`            // International Securities Identification Number
 	CompanyName            string    `gorm:"not null" json:"company_name"`
@@ -79,6 +80,7 @@ type StockHistory struct {
 // DeletedStock stores soft-deleted stocks in a log
 type DeletedStock struct {
 	ID           uint           `gorm:"primarykey" json:"id"`
+	PortfolioID  uint           `gorm:"not null;index" json:"portfolio_id"`
 	StockData    string         `gorm:"type:text" json:"stock_data"` // JSON serialized Stock object
 	Ticker       string         `gorm:"index" json:"ticker"`
 	CompanyName  string         `json:"company_name"`
