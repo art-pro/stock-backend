@@ -446,7 +446,7 @@ func (h *AssessmentHandler) generateGrokAssessment(ticker, companyName string, c
 
 	// Build Grok API request
 	reqBody := map[string]interface{}{
-		"model": "grok-2-1212",
+		"model": "grok-4-1-fast-reasoning-latest",
 		"messages": []map[string]string{
 			{
 				"role":    "system",
@@ -535,7 +535,7 @@ func (h *AssessmentHandler) generateDeepseekAssessment(ticker, companyName strin
 
 	// Build Deepseek API request
 	reqBody := map[string]interface{}{
-		"model": "deepseek-chat",
+		"model": "deepseek-reasoner",
 		"messages": []map[string]string{
 			{
 				"role":    "system",
