@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/artpro/assessapp/pkg/config"
@@ -40,6 +41,10 @@ func (h *StockHandler) GetAllStocks(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch stocks"})
 		return
 	}
+
+	// Add caching headers - cache for 30 seconds
+	c.Header("Cache-Control", "private, max-age=30, stale-while-revalidate=60")
+	c.Header("ETag", strconv.FormatInt(time.Now().Unix()/30, 10)) // ETag changes every 30 seconds
 
 	c.JSON(http.StatusOK, stocks)
 }
@@ -1009,4 +1014,58 @@ func (h *StockHandler) BulkUpdateStocks(c *gin.Context) {
 		Msg("Bulk stock update completed")
 
 	c.JSON(http.StatusOK, response)
+}
+
+// GetStocksBatch returns multiple stocks by IDs in a single request
+// Query params: ids=1,2,3,4 or ids[]=1&ids[]=2&ids[]=3
+func (h *StockHandler) GetStocksBatch(c *gin.Context) {
+	// Get IDs from query params
+	idsParam := c.Query("ids")
+	if idsParam == "" {
+		// Try array format
+		idsArray := c.QueryArray("ids[]")
+		if len(idsArray) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No stock IDs provided"})
+			return
+		}
+
+		var stocks []models.Stock
+		if err := h.db.Where("id IN ?", idsArray).Find(&stocks).Error; err != nil {
+			h.logger.Error().Err(err).Msg("Failed to fetch stocks")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch stocks"})
+			return
+		}
+
+		// Add caching headers - cache for 30 seconds
+		c.Header("Cache-Control", "private, max-age=30, stale-while-revalidate=60")
+
+		c.JSON(http.StatusOK, stocks)
+		return
+	}
+
+	// Split comma-separated IDs
+	ids := []string{}
+	for _, id := range strings.Split(idsParam, ",") {
+		trimmed := strings.TrimSpace(id)
+		if trimmed != "" {
+			ids = append(ids, trimmed)
+		}
+	}
+
+	if len(ids) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No valid stock IDs provided"})
+		return
+	}
+
+	var stocks []models.Stock
+	if err := h.db.Where("id IN ?", ids).Find(&stocks).Error; err != nil {
+		h.logger.Error().Err(err).Msg("Failed to fetch stocks")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch stocks"})
+		return
+	}
+
+	// Add caching headers - cache for 30 seconds
+	c.Header("Cache-Control", "private, max-age=30, stale-while-revalidate=60")
+
+	c.JSON(http.StatusOK, stocks)
 }

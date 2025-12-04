@@ -36,7 +36,10 @@ func (h *ExchangeRateHandler) GetAllRates(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch exchange rates"})
 		return
 	}
-	
+
+	// Exchange rates change infrequently - cache for 5 minutes
+	c.Header("Cache-Control", "private, max-age=300, stale-while-revalidate=600")
+
 	c.JSON(http.StatusOK, rates)
 }
 

@@ -86,6 +86,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 
 		// Stock routes
 		protected.GET("/stocks", stockHandler.GetAllStocks)
+		protected.GET("/stocks/batch", stockHandler.GetStocksBatch) // Must be before /:id to avoid conflict
 		protected.GET("/stocks/:id", stockHandler.GetStock)
 		protected.POST("/stocks", stockHandler.CreateStock)
 		protected.PUT("/stocks/:id", stockHandler.UpdateStock)

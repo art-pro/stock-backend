@@ -76,6 +76,9 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 		}
 	}
 
+	// Add caching headers - cache for 30 seconds
+	c.Header("Cache-Control", "private, max-age=30, stale-while-revalidate=60")
+
 	c.JSON(http.StatusOK, gin.H{
 		"summary": metrics,
 		"stocks":  stocks,

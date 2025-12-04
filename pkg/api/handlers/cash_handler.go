@@ -63,6 +63,9 @@ func (h *CashHandler) GetAllCashHoldings(c *gin.Context) {
 		}
 	}
 
+	// Cash holdings change infrequently - cache for 2 minutes
+	c.Header("Cache-Control", "private, max-age=120, stale-while-revalidate=240")
+
 	c.JSON(http.StatusOK, cashHoldings)
 }
 
