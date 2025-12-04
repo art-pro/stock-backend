@@ -77,8 +77,9 @@ func (h *AssessmentHandler) ExtractFromImages(c *gin.Context) {
 Rules:
 1. Extract ONLY data visible in the image.
 2. If a value (like shares owned) is not visible, use 0.
-3. Do not invent or hallucinate tickers or prices.
-4. Return strictly raw JSON array, no markdown formatting.`
+3. The "current_price" should be taken from the "Last" column if available.
+4. Do not invent or hallucinate tickers or prices.
+5. Return strictly raw JSON array, no markdown formatting.`
 
 	var content string
 	var err error
