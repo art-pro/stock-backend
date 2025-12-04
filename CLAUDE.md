@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Stock Portfolio Management Backend - Project Documentation
 
 ## Project Overview
@@ -327,3 +328,280 @@ Structured logging via zerolog with:
 
 **Last Updated:** 2025-12-04
 **Main Branch:** main
+=======
+# Stock Backend - AI-Powered Portfolio Management System
+
+## Overview
+
+**stock-backend** is a sophisticated stock portfolio management and analysis application built with **Go (Gin framework)** that provides AI-powered investment analysis, portfolio tracking, and automated data updates. The application is designed for quantitative investors using Kelly criterion and Expected Value (EV) models.
+
+**Current Version:** 1.4.1 (Build Date: 2025-11-12)
+
+## Core Features
+
+### 📊 Portfolio Management
+- Track multiple stocks with detailed financial metrics
+- Multi-currency portfolio support (EUR as base currency)
+- Real-time portfolio valuation and weight calculations
+- Position tracking with P&L calculations
+- Cash holdings in multiple currencies
+
+### 🤖 AI-Powered Stock Assessment
+- Integration with Grok (XAI) and Deepseek AI APIs
+- Generate detailed stock assessments and analysis
+- Request assessments via external API calls
+- Track assessment history
+
+### 📈 Advanced Financial Analytics
+- **Expected Value (EV)** calculations based on probability-weighted returns
+- **Kelly Criterion** implementation for optimal position sizing
+- **Half-Kelly** suggested position weights (capped at 15%)
+- **Buy zone** calculations (price ranges with attractive entry points)
+- Risk/Upside ratio analysis
+- Volatility tracking and Sharpe ratio calculations
+
+### ⏰ Automated Data Updates
+- Scheduler for automatic stock price and data fetching
+- Integration with Alpha Vantage for real-time quotes and fundamentals
+- Configurable update frequencies: daily, weekly, monthly, or manual
+- Rate limiting to respect API quotas (5 calls/minute free tier)
+
+### 🔔 Alert System
+- EV change alerts
+- Buy zone alerts
+- Email notifications via SendGrid
+- Configurable alert thresholds
+
+## Architecture
+
+### Technology Stack
+- **Backend**: Go (Gin framework)
+- **Database**: PostgreSQL (production), SQLite (development)
+- **ORM**: GORM
+- **Authentication**: JWT with bcrypt password hashing
+- **Scheduling**: Go-CRON
+- **Logging**: Zerolog structured logging
+- **Email**: SendGrid
+
+### Project Structure
+```
+stock-backend/
+├── main.go                    # Application entry point
+├── pkg/
+│   ├── api/
+│   │   ├── router.go         # Routes & CORS configuration
+│   │   └── handlers/         # HTTP request handlers
+│   ├── middleware/           # JWT authentication middleware
+│   ├── auth/                 # Authentication logic
+│   ├── config/               # Environment configuration
+│   ├── database/             # GORM setup & migrations
+│   ├── models/               # Data models
+│   ├── services/             # Business logic & external APIs
+│   └── scheduler/            # Automated task scheduling
+└── api/
+    └── index.go              # Vercel serverless entry point
+```
+
+## API Endpoints
+
+### Public Routes (`/api`)
+- `POST /login` - User authentication
+- `GET /health` - Health check
+- `GET /version` - API version information
+
+### Protected Routes (JWT Required)
+
+#### Stock Management
+- `GET /stocks` - List all stocks
+- `POST /stocks` - Create new stock
+- `GET/PUT/DELETE /stocks/:id` - Stock CRUD operations
+- `PATCH /stocks/:id/price` - Update stock price
+- `POST /stocks/update-all` - Bulk update via APIs
+
+#### Portfolio Analytics
+- `GET /portfolio/summary` - Portfolio metrics and analysis
+- `GET/PUT /portfolio/settings` - Portfolio configuration
+
+#### Data Management
+- `GET /export/csv` - Export portfolio to CSV
+- `POST /import/csv` - Import portfolio from CSV
+
+#### AI Assessments
+- `POST /assessment/request` - Request new AI assessment
+- `GET /assessment/recent` - Recent assessments
+- `GET /assessment/:id` - Get assessment details
+
+## Financial Calculations
+
+### Core Formulas
+
+1. **Expected Value (EV)**
+   ```
+   EV = (probability × upside%) + ((1-probability) × downside%)
+   ```
+
+2. **Kelly Criterion**
+   ```
+   Kelly Fraction = ((b × p) - q) / b
+   where: b = odds, p = probability, q = 1 - p
+   ```
+
+3. **Half-Kelly (Conservative)**
+   ```
+   Half-Kelly = Kelly Fraction / 2 (capped at 15%)
+   ```
+
+4. **Buy Zone Calculation**
+   - Price range where Expected Value ≥ 15%
+   - Calculated backwards from target EV
+
+### Investment Decision Logic
+- **EV > 7%** → "Add" (Strong Buy)
+- **EV > 0%** → "Hold" (Neutral)
+- **EV > -3%** → "Trim" (Weak Sell)
+- **EV ≤ -3%** → "Sell" (Strong Sell)
+
+## External API Integrations
+
+### Alpha Vantage
+- **Purpose**: Stock prices and company fundamentals
+- **Rate Limit**: 5 calls/minute (free tier)
+- **Features**: Real-time quotes, financial metrics, company overview
+
+### AI Services
+- **Grok (XAI)**: Primary AI for stock analysis
+- **Deepseek**: Alternative AI service
+- **Purpose**: Generate comprehensive stock assessments
+
+### Exchange Rate API
+- **Purpose**: Multi-currency support
+- **Rate Limit**: 1,500 requests/month
+- **Caching**: 24-hour cache for efficiency
+
+### SendGrid
+- **Purpose**: Email alerts and notifications
+- **Features**: EV change alerts, buy zone notifications
+
+## Multi-Currency Support
+
+The system operates with **EUR as the base currency**:
+
+- All calculations performed in EUR
+- Automatic currency conversion for non-EUR stocks
+- Cash holdings supported in multiple currencies
+- Exchange rates updated via API or manual entry
+- USD values maintained for backward compatibility
+
+## Configuration
+
+### Environment Variables
+
+#### Application
+- `APP_ENV` - development/production
+- `PORT` - Server port (default: 8080)
+- `FRONTEND_URL` - CORS configuration
+
+#### Database
+- `DATABASE_URL` - PostgreSQL connection (production)
+- `DATABASE_PATH` - SQLite path (development)
+
+#### Authentication
+- `ADMIN_USERNAME` / `ADMIN_PASSWORD`
+- `JWT_SECRET`
+
+#### External APIs
+- `ALPHA_VANTAGE_API_KEY`
+- `XAI_API_KEY` (Grok)
+- `DEEPSEEK_API_KEY`
+- `EXCHANGE_RATES_API_KEY`
+
+#### Email & Alerts
+- `SENDGRID_API_KEY`
+- `ALERT_EMAIL_FROM` / `ALERT_EMAIL_TO`
+
+#### Scheduler
+- `ENABLE_SCHEDULER` - Enable/disable automated tasks
+- `DEFAULT_UPDATE_FREQUENCY` - daily/weekly/monthly
+
+## Scheduler System
+
+### Automated Tasks
+- **Daily Updates**: 00:00 UTC - Price and fundamental data
+- **Weekly Updates**: Mondays - Comprehensive data refresh
+- **Monthly Updates**: 1st of month - Full portfolio rebalance
+- **Hourly Alerts**: Check for alert conditions
+
+### Rate Limiting
+- Respects Alpha Vantage free tier limits
+- Automatic delays between API calls
+- Prevents quota exhaustion
+
+## Security Features
+
+- **JWT Authentication**: 24-hour token expiration
+- **Password Security**: BCrypt hashing
+- **Environment Configuration**: Secure credential management
+- **CORS Protection**: Origin whitelist for API access
+- **Route Protection**: Middleware-based authentication
+
+## Data Models
+
+### Key Entities
+- **User**: Admin user credentials
+- **Stock**: Portfolio holdings with 40+ financial metrics
+- **StockHistory**: Historical metric snapshots
+- **DeletedStock**: Audit trail for deleted positions
+- **PortfolioSettings**: Portfolio-wide configuration
+- **Assessment**: AI-generated stock analyses
+- **ExchangeRate**: Currency conversion rates
+- **CashHolding**: Multi-currency cash reserves
+- **Alert**: System-generated notifications
+
+## Build & Deployment
+
+### Makefile Commands
+```bash
+make install      # Install dependencies
+make run-backend  # Run development server
+make build        # Build production binary
+make test         # Run test suite
+make deploy       # Deploy to Vercel
+```
+
+### Deployment
+- **Platform**: Vercel serverless functions
+- **Configuration**: `vercel.json` for deployment settings
+- **Scaling**: Auto-scaling based on demand
+
+## Development Workflow
+
+### Local Development
+1. Install Go dependencies: `make install`
+2. Set up environment variables in `.env`
+3. Initialize database (automatic on first run)
+4. Start development server: `make run-backend`
+
+### Database Setup
+- **Development**: SQLite (automatic initialization)
+- **Production**: PostgreSQL (requires `DATABASE_URL`)
+- **Migrations**: Automatic GORM migrations on startup
+- **Admin User**: Created automatically from environment variables
+
+## Recent Updates (v1.4.1)
+
+- Enhanced CORS handling with dynamic origin checking
+- Improved stock assessment prompts for data freshness
+- Better USD value calculations for portfolio metrics
+- Refactored exchange rate management system
+- Enhanced error handling and logging
+
+## Documentation
+
+- [`EXCHANGE_RATES.md`](./EXCHANGE_RATES.md) - Multi-currency portfolio setup and management
+
+---
+
+**Last Updated**: December 2024
+**Maintained By**: Portfolio Management System
+**License**: Private/Commercial
+>>>>>>> a88a492 (Add comprehensive AI-oriented documentation file)
