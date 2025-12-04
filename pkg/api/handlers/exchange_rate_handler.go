@@ -3,8 +3,8 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/artpro/assessapp/pkg/config"
-	"github.com/artpro/assessapp/pkg/services"
+	"github.com/art-pro/stock-backend/pkg/config"
+	"github.com/art-pro/stock-backend/pkg/services"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
@@ -50,7 +50,7 @@ func (h *ExchangeRateHandler) RefreshRates(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	// Return updated rates
 	rates, err := h.service.GetAllRates()
 	if err != nil {
@@ -58,7 +58,7 @@ func (h *ExchangeRateHandler) RefreshRates(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch updated rates"})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Exchange rates refreshed successfully",
 		"rates":   rates,
@@ -79,13 +79,13 @@ func (h *ExchangeRateHandler) AddCurrency(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 		return
 	}
-	
+
 	if err := h.service.AddCurrency(req.CurrencyCode, req.Rate, req.IsManual); err != nil {
 		h.logger.Error().Err(err).Msg("Failed to add currency")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add currency"})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{"message": "Currency added successfully"})
 }
 
@@ -98,31 +98,31 @@ type UpdateRateRequest struct {
 // UpdateRate updates an exchange rate
 func (h *ExchangeRateHandler) UpdateRate(c *gin.Context) {
 	currencyCode := c.Param("code")
-	
+
 	var req UpdateRateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 		return
 	}
-	
+
 	if err := h.service.UpdateRate(currencyCode, req.Rate, req.IsManual); err != nil {
 		h.logger.Error().Err(err).Str("currency", currencyCode).Msg("Failed to update rate")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update rate"})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{"message": "Rate updated successfully"})
 }
 
 // DeleteCurrency soft deletes a currency
 func (h *ExchangeRateHandler) DeleteCurrency(c *gin.Context) {
 	currencyCode := c.Param("code")
-	
+
 	if err := h.service.DeleteCurrency(currencyCode); err != nil {
 		h.logger.Error().Err(err).Str("currency", currencyCode).Msg("Failed to delete currency")
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{"message": "Currency deleted successfully"})
 }

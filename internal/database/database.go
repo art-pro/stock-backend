@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/artpro/assessapp/internal/models"
+	"github.com/art-pro/stock-backend/internal/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"

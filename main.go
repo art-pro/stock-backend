@@ -4,10 +4,10 @@ import (
 	"log"
 	"os"
 
-	"github.com/artpro/assessapp/pkg/api"
-	"github.com/artpro/assessapp/pkg/config"
-	"github.com/artpro/assessapp/pkg/database"
-	"github.com/artpro/assessapp/pkg/scheduler"
+	"github.com/art-pro/stock-backend/pkg/api"
+	"github.com/art-pro/stock-backend/pkg/config"
+	"github.com/art-pro/stock-backend/pkg/database"
+	"github.com/art-pro/stock-backend/pkg/scheduler"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
 )

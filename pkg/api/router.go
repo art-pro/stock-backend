@@ -1,9 +1,9 @@
 package api
 
 import (
-	"github.com/artpro/assessapp/pkg/api/handlers"
-	"github.com/artpro/assessapp/pkg/config"
-	"github.com/artpro/assessapp/pkg/middleware"
+	"github.com/art-pro/stock-backend/pkg/api/handlers"
+	"github.com/art-pro/stock-backend/pkg/config"
+	"github.com/art-pro/stock-backend/pkg/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"

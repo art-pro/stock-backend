@@ -3,9 +3,9 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/artpro/assessapp/internal/auth"
-	"github.com/artpro/assessapp/internal/config"
-	"github.com/artpro/assessapp/internal/models"
+	"github.com/art-pro/stock-backend/internal/auth"
+	"github.com/art-pro/stock-backend/internal/config"
+	"github.com/art-pro/stock-backend/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
@@ -84,7 +84,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) Logout(c *gin.Context) {
 	username, _ := c.Get("username")
 	h.logger.Info().Str("username", username.(string)).Msg("User logged out")
-	
+
 	c.JSON(http.StatusOK, gin.H{"message": "Logout successful"})
 }
 
@@ -97,7 +97,7 @@ type ChangePasswordRequest struct {
 // ChangePassword handles password change
 func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	userID, _ := c.Get("user_id")
-	
+
 	var req ChangePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request, password must be at least 8 characters"})
@@ -147,7 +147,7 @@ type ChangeUsernameRequest struct {
 // ChangeUsername handles username change
 func (h *AuthHandler) ChangeUsername(c *gin.Context) {
 	userID, _ := c.Get("user_id")
-	
+
 	var req ChangeUsernameRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request, username must be at least 3 characters"})
@@ -206,4 +206,3 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		"username": username,
 	})
 }
-

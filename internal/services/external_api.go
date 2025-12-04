@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/artpro/assessapp/internal/config"
-	"github.com/artpro/assessapp/internal/models"
+	"github.com/art-pro/stock-backend/internal/config"
+	"github.com/art-pro/stock-backend/internal/models"
 )
 
 // ExternalAPIService handles all external API integrations

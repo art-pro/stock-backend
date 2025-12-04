@@ -1,4 +1,4 @@
-module github.com/artpro/assessapp
+module github.com/art-pro/stock-backend
 
 go 1.24.11
 

@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/artpro/assessapp/pkg/config"
-	"github.com/artpro/assessapp/pkg/models"
-	"github.com/artpro/assessapp/pkg/services"
+	"github.com/art-pro/stock-backend/pkg/config"
+	"github.com/art-pro/stock-backend/pkg/models"
+	"github.com/art-pro/stock-backend/pkg/services"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
@@ -62,7 +62,7 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 		if stocks[i].SharesOwned <= 0 {
 			continue
 		}
-		
+
 		fxRate := fxRates[stocks[i].Currency]
 		if fxRate == 0 {
 			fxRate = 1.0
@@ -208,7 +208,7 @@ func (h *PortfolioHandler) GetAlerts(c *gin.Context) {
 // DeleteAlert deletes an alert
 func (h *PortfolioHandler) DeleteAlert(c *gin.Context) {
 	id := c.Param("id")
-	
+
 	if err := h.db.Delete(&models.Alert{}, id).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to delete alert")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete alert"})
@@ -217,4 +217,3 @@ func (h *PortfolioHandler) DeleteAlert(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Alert deleted successfully"})
 }
-

@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/artpro/assessapp/pkg/models"
+	"github.com/art-pro/stock-backend/pkg/models"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -81,7 +81,7 @@ func (s *ExchangeRateService) FetchLatestRates() error {
 		// Check if we track this currency
 		var exchangeRate models.ExchangeRate
 		result := s.db.Where("currency_code = ?", code).First(&exchangeRate)
-		
+
 		if result.Error == nil {
 			// Update existing rate if not manually set
 			if !exchangeRate.IsManual {
@@ -131,7 +131,7 @@ func (s *ExchangeRateService) GetRatesMap() (map[string]float64, error) {
 	for _, rate := range rates {
 		rateMap[rate.CurrencyCode] = rate.Rate
 	}
-	
+
 	return rateMap, nil
 }
 
@@ -144,7 +144,7 @@ func (s *ExchangeRateService) AddCurrency(currencyCode string, rate float64, isM
 		IsActive:     true,
 		IsManual:     isManual,
 	}
-	
+
 	return s.db.Create(&exchangeRate).Error
 }
 
@@ -154,11 +154,11 @@ func (s *ExchangeRateService) UpdateRate(currencyCode string, rate float64, isMa
 	if err := s.db.Where("currency_code = ?", currencyCode).First(&exchangeRate).Error; err != nil {
 		return err
 	}
-	
+
 	exchangeRate.Rate = rate
 	exchangeRate.IsManual = isManual
 	exchangeRate.LastUpdated = time.Now()
-	
+
 	return s.db.Save(&exchangeRate).Error
 }
 
@@ -168,7 +168,7 @@ func (s *ExchangeRateService) DeleteCurrency(currencyCode string) error {
 	if currencyCode == "EUR" {
 		return fmt.Errorf("cannot delete base currency EUR")
 	}
-	
+
 	// Don't allow deleting default currencies
 	defaultCurrencies := []string{"USD", "DKK", "GBP", "RUB"}
 	for _, dc := range defaultCurrencies {
@@ -176,7 +176,7 @@ func (s *ExchangeRateService) DeleteCurrency(currencyCode string) error {
 			return fmt.Errorf("cannot delete default currency %s", currencyCode)
 		}
 	}
-	
+
 	return s.db.Model(&models.ExchangeRate{}).
 		Where("currency_code = ?", currencyCode).
 		Update("is_active", false).Error
@@ -187,16 +187,16 @@ func (s *ExchangeRateService) ConvertToEUR(amount float64, fromCurrency string) 
 	if fromCurrency == "EUR" {
 		return amount, nil
 	}
-	
+
 	rate, err := s.GetRate(fromCurrency)
 	if err != nil {
 		return 0, err
 	}
-	
+
 	if rate == 0 {
 		return 0, fmt.Errorf("invalid exchange rate for %s", fromCurrency)
 	}
-	
+
 	return amount / rate, nil
 }
 
@@ -205,11 +205,11 @@ func (s *ExchangeRateService) ConvertFromEUR(amount float64, toCurrency string) 
 	if toCurrency == "EUR" {
 		return amount, nil
 	}
-	
+
 	rate, err := s.GetRate(toCurrency)
 	if err != nil {
 		return 0, err
 	}
-	
+
 	return amount * rate, nil
 }

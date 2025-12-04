@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/artpro/assessapp/pkg/config"
-	"github.com/artpro/assessapp/pkg/models"
+	"github.com/art-pro/stock-backend/pkg/config"
+	"github.com/art-pro/stock-backend/pkg/models"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"

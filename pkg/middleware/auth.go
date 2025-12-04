@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/artpro/assessapp/pkg/auth"
-	"github.com/artpro/assessapp/pkg/config"
+	"github.com/art-pro/stock-backend/pkg/auth"
+	"github.com/art-pro/stock-backend/pkg/config"
 	"github.com/gin-gonic/gin"
 )
 
@@ -49,4 +49,3 @@ func RateLimitMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
-

@@ -3,7 +3,7 @@ package services
 import (
 	"math"
 
-	"github.com/artpro/assessapp/pkg/models"
+	"github.com/art-pro/stock-backend/pkg/models"
 )
 
 // CalculateMetrics calculates all derived metrics for a stock
@@ -53,7 +53,7 @@ func CalculateMetrics(stock *models.Stock) {
 		q := 1 - stock.ProbabilityPositive
 		stock.KellyFraction = ((stock.BRatio * stock.ProbabilityPositive) - q) / stock.BRatio
 		stock.KellyFraction = stock.KellyFraction * 100 // Convert to percentage
-		
+
 		// If f* is negative, set to 0% (no position)
 		if stock.KellyFraction < 0 {
 			stock.KellyFraction = 0
@@ -111,14 +111,14 @@ func CalculateMetrics(stock *models.Stock) {
 func CalculatePortfolioMetrics(stocks []models.Stock, fxRates map[string]float64) PortfolioMetrics {
 	var totalValue float64
 	stockValues := make([]float64, len(stocks))
-	
+
 	// First pass: Calculate total portfolio value
 	for i, stock := range stocks {
 		// Skip stocks with no shares owned
 		if stock.SharesOwned <= 0 {
 			continue
 		}
-		
+
 		// Calculate position value in USD
 		fxRate := fxRates[stock.Currency]
 		if fxRate == 0 {
@@ -135,21 +135,21 @@ func CalculatePortfolioMetrics(stocks []models.Stock, fxRates map[string]float64
 	var weightedVolatility float64
 	sectorWeights := make(map[string]float64)
 	kellyUtilization := 0.0
-	
+
 	for i, stock := range stocks {
 		// Skip stocks with no shares owned
 		if stock.SharesOwned <= 0 {
 			continue
 		}
-		
+
 		if totalValue > 0 && stockValues[i] > 0 {
 			weight := stockValues[i] / totalValue
 			weightedEV += stock.ExpectedValue * weight
 			weightedVolatility += stock.Volatility * weight
-			
+
 			// Accumulate sector weights
 			sectorWeights[stock.Sector] += weight * 100
-			
+
 			// Kelly utilization is sum of actual weights
 			kellyUtilization += weight * 100
 		}

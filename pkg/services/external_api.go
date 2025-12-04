@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/artpro/assessapp/pkg/config"
-	"github.com/artpro/assessapp/pkg/models"
+	"github.com/art-pro/stock-backend/pkg/config"
+	"github.com/art-pro/stock-backend/pkg/models"
 )
 
 // ExternalAPIService handles all external API integrations
@@ -18,8 +18,8 @@ type ExternalAPIService struct {
 	cfg                   *config.Config
 	client                *http.Client
 	exchangeRateCache     map[string]float64 // Cache for exchange rates from Grok
-	lastAlphaVantageCall  time.Time         // Track last API call for rate limiting
-	alphaVantageCallMutex sync.Mutex        // Mutex for thread-safe rate limiting
+	lastAlphaVantageCall  time.Time          // Track last API call for rate limiting
+	alphaVantageCallMutex sync.Mutex         // Mutex for thread-safe rate limiting
 }
 
 // AlphaVantageQuote represents Alpha Vantage real-time quote data
@@ -37,9 +37,9 @@ type AlphaVantageQuote struct {
 		ChangePercent    string `json:"10. change percent"`
 	} `json:"Global Quote"`
 	// Error handling fields
-	Note         string `json:"Note,omitempty"`         // Rate limit message
+	Note         string `json:"Note,omitempty"`          // Rate limit message
 	ErrorMessage string `json:"Error Message,omitempty"` // Invalid symbol/API key
-	Information  string `json:"Information,omitempty"`  // API usage info
+	Information  string `json:"Information,omitempty"`   // API usage info
 }
 
 // AlphaVantageOverview represents company overview data with fundamentals
@@ -66,9 +66,9 @@ type AlphaVantageOverview struct {
 	QuarterlyEarningsGrowthYOY string `json:"QuarterlyEarningsGrowthYOY"`
 	QuarterlyRevenueGrowthYOY  string `json:"QuarterlyRevenueGrowthYOY"`
 	// Error handling fields
-	Note         string `json:"Note,omitempty"`         // Rate limit message
+	Note         string `json:"Note,omitempty"`          // Rate limit message
 	ErrorMessage string `json:"Error Message,omitempty"` // Invalid symbol/API key
-	Information  string `json:"Information,omitempty"`  // API usage info
+	Information  string `json:"Information,omitempty"`   // API usage info
 }
 
 // NewExternalAPIService creates a new external API service
@@ -94,14 +94,14 @@ func (s *ExternalAPIService) enforceAlphaVantageRateLimit() {
 		// Free tier: 5 calls per minute = 1 call every 12 seconds
 		// We use 13 seconds to be safe
 		minInterval := 13 * time.Second
-		
+
 		if timeSinceLastCall < minInterval {
 			sleepDuration := minInterval - timeSinceLastCall
 			fmt.Printf("⏱ Rate limiting: waiting %.1f seconds before next Alpha Vantage call...\n", sleepDuration.Seconds())
 			time.Sleep(sleepDuration)
 		}
 	}
-	
+
 	s.lastAlphaVantageCall = time.Now()
 }
 
@@ -337,11 +337,11 @@ type GrokStockData struct {
 func (s *ExternalAPIService) FetchAllStockData(stock *models.Stock) error {
 	var dataSource string
 	var fairValueSource string
-	
+
 	// Step 1: Try to fetch real-time data from Alpha Vantage (most accurate)
 	if s.cfg.AlphaVantageAPIKey != "" {
 		fmt.Printf("Fetching Alpha Vantage data for %s...\n", stock.Ticker)
-		
+
 		// Fetch current price
 		quote, err := s.FetchAlphaVantageQuote(stock.Ticker)
 		if err == nil && quote.GlobalQuote.Price != "" {
@@ -351,7 +351,7 @@ func (s *ExternalAPIService) FetchAllStockData(stock *models.Stock) error {
 		} else {
 			fmt.Printf("⚠ Alpha Vantage quote error: %v\n", err)
 		}
-		
+
 		// Fetch fundamentals (beta, fair value, etc.)
 		overview, err := s.FetchAlphaVantageOverview(stock.Ticker)
 		if err == nil && overview.Symbol != "" {
@@ -360,23 +360,23 @@ func (s *ExternalAPIService) FetchAllStockData(stock *models.Stock) error {
 				stock.Beta = parseFloat(overview.Beta)
 				fmt.Printf("✓ Beta from Alpha Vantage: %.2f\n", stock.Beta)
 			}
-			
+
 			// Update fair value from analyst target price
 			if overview.AnalystTargetPrice != "" && overview.AnalystTargetPrice != "None" {
 				stock.FairValue = parseFloat(overview.AnalystTargetPrice)
 				fairValueSource = fmt.Sprintf("Alpha Vantage Consensus, %s", time.Now().Format("Jan 2, 2006"))
 				fmt.Printf("✓ Fair value from Alpha Vantage: %.2f\n", stock.FairValue)
 			}
-			
+
 			// Update other fundamentals
 			stock.PERatio = parseFloat(overview.PERatio)
 			stock.DividendYield = parseFloat(overview.DividendYield)
-			
+
 			// Calculate EPS growth from quarterly data
 			if overview.QuarterlyEarningsGrowthYOY != "" {
 				stock.EPSGrowthRate = parseFloat(overview.QuarterlyEarningsGrowthYOY) * 100
 			}
-			
+
 			// Update sector if provided
 			if overview.Sector != "" {
 				stock.Sector = overview.Sector
@@ -384,21 +384,21 @@ func (s *ExternalAPIService) FetchAllStockData(stock *models.Stock) error {
 		} else {
 			fmt.Printf("⚠ Alpha Vantage overview error: %v\n", err)
 		}
-		
+
 		// If we got basic data from Alpha Vantage, use it
 		if stock.CurrentPrice > 0 {
 			stock.DataSource = dataSource
 			if fairValueSource != "" {
 				stock.FairValueSource = fairValueSource
 			}
-			
+
 			// Use CalculateMetrics to compute derived values
 			CalculateMetrics(stock)
 			stock.LastUpdated = time.Now()
 			return nil
 		}
 	}
-	
+
 	// Step 2: If Alpha Vantage not available or failed, try Grok
 	if s.cfg.XAIAPIKey == "" {
 		// No APIs configured - return error
@@ -569,7 +569,7 @@ VERIFY: Current price must be LOWER than fair value if upside is positive. Use r
 	stock.DividendYield = analysis.DividendYield
 	stock.ProbabilityPositive = analysis.ProbabilityPositive
 	stock.DownsideRisk = analysis.DownsideRisk
-	
+
 	// Set data source
 	stock.DataSource = "Grok AI"
 	stock.FairValueSource = fmt.Sprintf("Grok AI Analysis, %s", time.Now().Format("Jan 2, 2006"))
@@ -965,11 +965,11 @@ Return ONLY valid JSON (no markdown, no extra text):
 	stock.EPSGrowthRate = data.EPSGrowthRate
 	stock.DebtToEBITDA = data.DebtToEBITDA
 	stock.DividendYield = data.DividendYield
-	
+
 	if data.Sector != "" {
 		stock.Sector = data.Sector
 	}
-	
+
 	stock.DataSource = "Grok AI (Analytical)"
 	if data.FairValueSource != "" {
 		stock.FairValueSource = data.FairValueSource

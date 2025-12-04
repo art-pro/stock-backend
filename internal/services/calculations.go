@@ -3,7 +3,7 @@ package services
 import (
 	"math"
 
-	"github.com/artpro/assessapp/internal/models"
+	"github.com/art-pro/stock-backend/internal/models"
 )
 
 // CalculateMetrics calculates all derived metrics for a stock

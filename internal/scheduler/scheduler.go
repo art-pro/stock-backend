@@ -3,9 +3,9 @@ package scheduler
 import (
 	"time"
 
-	"github.com/artpro/assessapp/internal/config"
-	"github.com/artpro/assessapp/internal/models"
-	"github.com/artpro/assessapp/internal/services"
+	"github.com/art-pro/stock-backend/internal/config"
+	"github.com/art-pro/stock-backend/internal/models"
+	"github.com/art-pro/stock-backend/internal/services"
 	"github.com/go-co-op/gocron"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
@@ -194,4 +194,3 @@ func checkAndSendAlerts(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) 
 func formatFloat(f float64) string {
 	return string(rune(int(f*100))) + "." + string(rune(int(f*100)%100))
 }
-

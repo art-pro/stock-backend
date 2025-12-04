@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/artpro/assessapp/internal/config"
-	"github.com/artpro/assessapp/internal/models"
+	"github.com/art-pro/stock-backend/internal/config"
+	"github.com/art-pro/stock-backend/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"

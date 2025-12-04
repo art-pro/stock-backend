@@ -3,8 +3,8 @@ package services
 import (
 	"fmt"
 
-	"github.com/artpro/assessapp/internal/config"
-	"github.com/artpro/assessapp/internal/models"
+	"github.com/art-pro/stock-backend/internal/config"
+	"github.com/art-pro/stock-backend/internal/models"
 	"github.com/rs/zerolog"
 	"github.com/sendgrid/sendgrid-go"
 	"github.com/sendgrid/sendgrid-go/helpers/mail"
@@ -33,9 +33,9 @@ func (s *AlertService) SendAlert(alert models.Alert) error {
 
 	from := mail.NewEmail("Stock Tracker Alerts", s.cfg.AlertEmailFrom)
 	to := mail.NewEmail("Admin", s.cfg.AlertEmailTo)
-	
+
 	subject := fmt.Sprintf("Stock Alert: %s - %s", alert.Ticker, alert.AlertType)
-	
+
 	plainTextContent := fmt.Sprintf(
 		"Alert for %s:\n\nType: %s\nMessage: %s\n\nGenerated at: %s",
 		alert.Ticker,
@@ -43,7 +43,7 @@ func (s *AlertService) SendAlert(alert models.Alert) error {
 		alert.Message,
 		alert.CreatedAt.Format("2006-01-02 15:04:05"),
 	)
-	
+
 	htmlContent := fmt.Sprintf(`
 		<html>
 		<body>
@@ -57,7 +57,7 @@ func (s *AlertService) SendAlert(alert models.Alert) error {
 
 	message := mail.NewSingleEmail(from, subject, to, plainTextContent, htmlContent)
 	client := sendgrid.NewSendClient(s.cfg.SendGridAPIKey)
-	
+
 	response, err := client.Send(message)
 	if err != nil {
 		return fmt.Errorf("failed to send email: %w", err)
@@ -70,4 +70,3 @@ func (s *AlertService) SendAlert(alert models.Alert) error {
 	s.logger.Info().Str("ticker", alert.Ticker).Msg("Alert email sent successfully")
 	return nil
 }
-

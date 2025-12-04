@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/artpro/assessapp/pkg/models"
+	"github.com/art-pro/stock-backend/pkg/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
@@ -74,20 +74,20 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 
 	// Initialize default exchange rates
 	InitializeExchangeRates(db)
-	
+
 	return db, nil
 }
 
 // InitializeExchangeRates creates default exchange rates if they don't exist
 func InitializeExchangeRates(db *gorm.DB) error {
 	defaultRates := []models.ExchangeRate{
-		{CurrencyCode: "EUR", Rate: 1.0, IsActive: true},       // Base currency
-		{CurrencyCode: "USD", Rate: 1.154, IsActive: true},     // Default rate
-		{CurrencyCode: "DKK", Rate: 7.4604, IsActive: true},    // Default rate
-		{CurrencyCode: "GBP", Rate: 0.8796, IsActive: true},    // Default rate
-		{CurrencyCode: "RUB", Rate: 93.7594, IsActive: true},   // Default rate
+		{CurrencyCode: "EUR", Rate: 1.0, IsActive: true},     // Base currency
+		{CurrencyCode: "USD", Rate: 1.154, IsActive: true},   // Default rate
+		{CurrencyCode: "DKK", Rate: 7.4604, IsActive: true},  // Default rate
+		{CurrencyCode: "GBP", Rate: 0.8796, IsActive: true},  // Default rate
+		{CurrencyCode: "RUB", Rate: 93.7594, IsActive: true}, // Default rate
 	}
-	
+
 	for _, rate := range defaultRates {
 		var existing models.ExchangeRate
 		result := db.Where("currency_code = ?", rate.CurrencyCode).First(&existing)
@@ -98,7 +98,7 @@ func InitializeExchangeRates(db *gorm.DB) error {
 			}
 		}
 	}
-	
+
 	return nil
 }
 

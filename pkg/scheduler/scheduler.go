@@ -3,9 +3,9 @@ package scheduler
 import (
 	"time"
 
-	"github.com/artpro/assessapp/pkg/config"
-	"github.com/artpro/assessapp/pkg/models"
-	"github.com/artpro/assessapp/pkg/services"
+	"github.com/art-pro/stock-backend/pkg/config"
+	"github.com/art-pro/stock-backend/pkg/models"
+	"github.com/art-pro/stock-backend/pkg/services"
 	"github.com/go-co-op/gocron"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
@@ -49,7 +49,7 @@ func updateStocksWithFrequency(db *gorm.DB, apiService *services.ExternalAPIServ
 	if frequency == "manually" {
 		return
 	}
-	
+
 	var stocks []models.Stock
 	if err := db.Where("update_frequency = ?", frequency).Find(&stocks).Error; err != nil {
 		logger.Error().Err(err).Str("frequency", frequency).Msg("Failed to fetch stocks for update")
@@ -194,4 +194,3 @@ func checkAndSendAlerts(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) 
 func formatFloat(f float64) string {
 	return string(rune(int(f*100))) + "." + string(rune(int(f*100)%100))
 }
-

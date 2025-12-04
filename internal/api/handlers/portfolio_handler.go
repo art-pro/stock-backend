@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/artpro/assessapp/internal/config"
-	"github.com/artpro/assessapp/internal/models"
-	"github.com/artpro/assessapp/internal/services"
+	"github.com/art-pro/stock-backend/internal/config"
+	"github.com/art-pro/stock-backend/internal/models"
+	"github.com/art-pro/stock-backend/internal/services"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
@@ -197,7 +197,7 @@ func (h *PortfolioHandler) GetAlerts(c *gin.Context) {
 // DeleteAlert deletes an alert
 func (h *PortfolioHandler) DeleteAlert(c *gin.Context) {
 	id := c.Param("id")
-	
+
 	if err := h.db.Delete(&models.Alert{}, id).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to delete alert")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete alert"})
@@ -206,4 +206,3 @@ func (h *PortfolioHandler) DeleteAlert(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Alert deleted successfully"})
 }
-
