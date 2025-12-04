@@ -27,8 +27,11 @@ type AssessmentHandler struct {
 
 // AssessmentRequest represents the request for stock assessment
 type AssessmentRequest struct {
-	Ticker string `json:"ticker" binding:"required"`
-	Source string `json:"source" binding:"required,oneof=grok deepseek"`
+	Ticker       string  `json:"ticker" binding:"required"`
+	Source       string  `json:"source" binding:"required,oneof=grok deepseek"`
+	CompanyName  string  `json:"company_name,omitempty"`
+	CurrentPrice float64 `json:"current_price,omitempty"`
+	Currency     string  `json:"currency,omitempty"`
 }
 
 // AssessmentResponse represents the response containing assessment
@@ -351,9 +354,9 @@ func (h *AssessmentHandler) RequestAssessment(c *gin.Context) {
 
 	switch req.Source {
 	case "grok":
-		assessment, err = h.generateGrokAssessment(req.Ticker)
+		assessment, err = h.generateGrokAssessment(req.Ticker, req.CompanyName, req.CurrentPrice, req.Currency)
 	case "deepseek":
-		assessment, err = h.generateDeepseekAssessment(req.Ticker)
+		assessment, err = h.generateDeepseekAssessment(req.Ticker, req.CompanyName, req.CurrentPrice, req.Currency)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid source. Must be 'grok' or 'deepseek'"})
 		return
@@ -427,7 +430,7 @@ func (h *AssessmentHandler) GetAssessmentById(c *gin.Context) {
 }
 
 // generateGrokAssessment generates assessment using Grok AI
-func (h *AssessmentHandler) generateGrokAssessment(ticker string) (string, error) {
+func (h *AssessmentHandler) generateGrokAssessment(ticker, companyName string, currentPrice float64, currency string) (string, error) {
 	if h.cfg.XAIAPIKey == "" {
 		return "", fmt.Errorf("Grok AI API key not configured")
 	}
@@ -439,7 +442,7 @@ func (h *AssessmentHandler) generateGrokAssessment(ticker string) (string, error
 	}
 
 	// Create the comprehensive prompt based on your strategy
-	prompt := h.buildAssessmentPrompt(ticker, portfolioData, cashData)
+	prompt := h.buildAssessmentPrompt(ticker, companyName, currentPrice, currency, portfolioData, cashData)
 
 	// Build Grok API request
 	reqBody := map[string]interface{}{
@@ -516,7 +519,7 @@ func (h *AssessmentHandler) generateGrokAssessment(ticker string) (string, error
 }
 
 // generateDeepseekAssessment generates assessment using Deepseek AI
-func (h *AssessmentHandler) generateDeepseekAssessment(ticker string) (string, error) {
+func (h *AssessmentHandler) generateDeepseekAssessment(ticker, companyName string, currentPrice float64, currency string) (string, error) {
 	if h.cfg.DeepseekAPIKey == "" {
 		return "", fmt.Errorf("Deepseek AI API key not configured")
 	}
@@ -528,7 +531,7 @@ func (h *AssessmentHandler) generateDeepseekAssessment(ticker string) (string, e
 	}
 
 	// Create the comprehensive prompt based on your strategy
-	prompt := h.buildAssessmentPrompt(ticker, portfolioData, cashData)
+	prompt := h.buildAssessmentPrompt(ticker, companyName, currentPrice, currency, portfolioData, cashData)
 
 	// Build Deepseek API request
 	reqBody := map[string]interface{}{
@@ -697,14 +700,23 @@ func (h *AssessmentHandler) buildPortfolioContext(portfolio []models.Stock, cash
 }
 
 // buildAssessmentPrompt creates the comprehensive prompt for stock assessment
-func (h *AssessmentHandler) buildAssessmentPrompt(ticker string, portfolio []models.Stock, cashHoldings []models.CashHolding) string {
+func (h *AssessmentHandler) buildAssessmentPrompt(ticker, companyName string, currentPrice float64, currency string, portfolio []models.Stock, cashHoldings []models.CashHolding) string {
 	// Build portfolio context string
 	portfolioContext := h.buildPortfolioContext(portfolio, cashHoldings)
 	// Get current date
 	currentDate := time.Now().Format("January 2, 2006")
 
-	return fmt.Sprintf(`CURRENT DATE: %s
+	// Build additional stock info
+	stockInfo := ""
+	if companyName != "" {
+		stockInfo += fmt.Sprintf("\n**Company Name:** %s", companyName)
+	}
+	if currentPrice > 0 && currency != "" {
+		stockInfo += fmt.Sprintf("\n**Current Price:** %.2f %s (user-provided)", currentPrice, currency)
+	}
 
+	return fmt.Sprintf(`CURRENT DATE: %s
+%s
 IMPORTANT: Please use the most recent available market data and financial information. Access current stock prices, latest quarterly earnings, recent analyst reports, and up-to-date fundamental metrics. If any data appears outdated, please indicate when the information was last updated.
 
 You are a financial advisor and investment consultant using a probabilistic strategy. For the stock %s, follow these steps:
@@ -789,7 +801,7 @@ Please provide a detailed assessment for %s following the template format simila
 
 Use real market data and provide specific numbers for all calculations. Be conservative with probability estimates and avoid hype.
 
-%s`, currentDate, ticker, ticker, portfolioContext)
+%s`, currentDate, stockInfo, ticker, ticker, portfolioContext)
 }
 
 // cleanupOldAssessments removes assessments beyond the most recent 20
