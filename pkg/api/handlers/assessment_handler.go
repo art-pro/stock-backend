@@ -51,6 +51,7 @@ func NewAssessmentHandler(db *gorm.DB, cfg *config.Config, logger zerolog.Logger
 // ExtractFromImagesRequest represents the request for image extraction
 type ExtractFromImagesRequest struct {
 	Images []string `json:"images" binding:"required"`
+	Source string   `json:"source,omitempty"` // "grok" or "deepseek"
 }
 
 // ExtractFromImages extracts stock data from uploaded images
@@ -61,7 +62,7 @@ func (h *AssessmentHandler) ExtractFromImages(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info().Int("image_count", len(req.Images)).Msg("Processing images for stock extraction")
+	h.logger.Info().Int("image_count", len(req.Images)).Str("source", req.Source).Msg("Processing images for stock extraction")
 
 	// Create prompt for vision analysis
 	prompt := `Extract stock portfolio data from these screenshots. Return ONLY a JSON array of objects with this exact schema:
@@ -78,25 +79,31 @@ Ensure all numbers are parsed correctly. If a ticker is ambiguous, include the e
 	var content string
 	var err error
 
-	// Try Grok Vision first if configured
-	if h.cfg.XAIAPIKey != "" {
-		content, err = h.extractWithGrokVision(req.Images, prompt)
-	} 
-	
-	// Fallback to Deepseek (though Deepseek V3 text model can't see images directly, 
-	// we'll assume for this implementation we are using a multimodal endpoint if available,
-	// or failover if Grok failed)
-	if (err != nil || h.cfg.XAIAPIKey == "") && h.cfg.DeepseekAPIKey != "" {
-		// Note: Deepseek currently (as of late 2024) is primarily text-based.
-		// If they add vision support, this would look similar to the Grok implementation.
-		// For now, we'll return an error if Grok is not available as we need a vision model.
-		if err != nil {
-			h.logger.Error().Err(err).Msg("Grok Vision failed")
+	// Determine which provider to use based on request and configuration
+	// Default to Grok unless Deepseek is requested or Grok is not configured
+	useGrok := true
+	if req.Source == "deepseek" {
+		useGrok = false
+	} else if h.cfg.XAIAPIKey == "" && h.cfg.DeepseekAPIKey != "" {
+		useGrok = false
+	}
+
+	if useGrok {
+		if h.cfg.XAIAPIKey == "" {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Grok API key not configured"})
+			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Vision processing requires a supported vision model (Grok Vision configured)"})
-		return
-	} else if err != nil {
-		h.logger.Error().Err(err).Msg("Vision processing failed")
+		content, err = h.extractWithGrokVision(req.Images, prompt)
+	} else {
+		if h.cfg.DeepseekAPIKey == "" {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Deepseek API key not configured"})
+			return
+		}
+		content, err = h.extractWithDeepseekVision(req.Images, prompt)
+	}
+
+	if err != nil {
+		h.logger.Error().Err(err).Bool("use_grok", useGrok).Msg("Vision processing failed")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process images: " + err.Error()})
 		return
 	}
@@ -146,7 +153,7 @@ func (h *AssessmentHandler) extractWithGrokVision(images []string, prompt string
 			// Assume jpeg if not specified, though frontend should send full data URI
 			imgBase64 = "data:image/jpeg;base64," + imgBase64
 		}
-		
+
 		contentList = append(contentList, map[string]interface{}{
 			"type": "image_url",
 			"image_url": map[string]string{
@@ -157,9 +164,9 @@ func (h *AssessmentHandler) extractWithGrokVision(images []string, prompt string
 	messages[0]["content"] = contentList
 
 	reqBody := map[string]interface{}{
-		"model": "grok-vision-beta", // Use appropriate vision model name
-		"messages": messages,
-		"stream": false,
+		"model":       "grok-2-vision-1212", // Use appropriate vision model name
+		"messages":    messages,
+		"stream":      false,
 		"temperature": 0.1, // Low temperature for data extraction
 	}
 
@@ -198,6 +205,104 @@ func (h *AssessmentHandler) extractWithGrokVision(images []string, prompt string
 	}
 
 	choices, ok := grokResp["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return "", fmt.Errorf("no choices in response")
+	}
+
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid choice format")
+	}
+
+	message, ok := choice["message"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid message format")
+	}
+
+	content, ok := message["content"].(string)
+	if !ok {
+		return "", fmt.Errorf("invalid content format")
+	}
+
+	return content, nil
+}
+
+// extractWithDeepseekVision uses Deepseek's capabilities to extract data from images
+func (h *AssessmentHandler) extractWithDeepseekVision(images []string, prompt string) (string, error) {
+	// Prepare messages with image content
+	messages := []map[string]interface{}{
+		{
+			"role": "user",
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": prompt,
+				},
+			},
+		},
+	}
+
+	// Add images to the content array
+	contentList := messages[0]["content"].([]map[string]interface{})
+	for _, imgBase64 := range images {
+		// Ensure base64 string has data URI prefix
+		if !strings.HasPrefix(imgBase64, "data:image") {
+			// Assume jpeg if not specified, though frontend should send full data URI
+			imgBase64 = "data:image/jpeg;base64," + imgBase64
+		}
+
+		contentList = append(contentList, map[string]interface{}{
+			"type": "image_url",
+			"image_url": map[string]string{
+				"url": imgBase64,
+			},
+		})
+	}
+	messages[0]["content"] = contentList
+
+	reqBody := map[string]interface{}{
+		"model":       "deepseek-chat", // Assuming V3/multimodal capability
+		"messages":    messages,
+		"stream":      false,
+		"temperature": 0.1,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Deepseek API endpoint
+	req, err := http.NewRequest("POST", "https://api.deepseek.com/chat/completions", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.cfg.DeepseekAPIKey)
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to call Deepseek API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("Deepseek API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var deepseekResp map[string]interface{}
+	if err := json.Unmarshal(body, &deepseekResp); err != nil {
+		return "", fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	choices, ok := deepseekResp["choices"].([]interface{})
 	if !ok || len(choices) == 0 {
 		return "", fmt.Errorf("no choices in response")
 	}
@@ -283,7 +388,7 @@ func (h *AssessmentHandler) RequestAssessment(c *gin.Context) {
 // GetRecentAssessments returns recent assessments
 func (h *AssessmentHandler) GetRecentAssessments(c *gin.Context) {
 	var assessments []models.Assessment
-	
+
 	// Get the last 20 assessments, ordered by creation time
 	if err := h.db.Order("created_at DESC").Limit(20).Find(&assessments).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to fetch recent assessments")
@@ -333,7 +438,7 @@ func (h *AssessmentHandler) generateGrokAssessment(ticker string) (string, error
 
 	// Build Grok API request
 	reqBody := map[string]interface{}{
-		"model": "grok-4-fast-reasoning",
+		"model": "grok-2-1212",
 		"messages": []map[string]string{
 			{
 				"role":    "system",
@@ -514,26 +619,26 @@ func (h *AssessmentHandler) fetchPortfolioContext() ([]models.Stock, []models.Ca
 // buildPortfolioContext creates a formatted string describing the current portfolio
 func (h *AssessmentHandler) buildPortfolioContext(portfolio []models.Stock, cashHoldings []models.CashHolding) string {
 	context := "\n\n## CURRENT PORTFOLIO CONTEXT\n\n"
-	
+
 	if len(portfolio) == 0 {
 		context += "**Current Portfolio:** Empty (no owned stocks)\n\n"
 	} else {
 		context += "**Current Portfolio (Owned Stocks):**\n\n"
 		context += "| Ticker | Company | Sector | Shares | Avg Price | Current Price | Position Value | Weight | EV | Assessment |\n"
 		context += "|--------|---------|--------|--------|-----------|---------------|----------------|--------|----|------------|\n"
-		
+
 		totalPortfolioValue := 0.0
 		for _, stock := range portfolio {
 			positionValue := float64(stock.SharesOwned) * stock.CurrentPrice
 			totalPortfolioValue += positionValue
 		}
-		
+
 		sectorAllocations := make(map[string]float64)
-		
+
 		for _, stock := range portfolio {
 			positionValue := float64(stock.SharesOwned) * stock.CurrentPrice
 			weightPercent := (positionValue / totalPortfolioValue) * 100
-			
+
 			context += fmt.Sprintf("| %s | %s | %s | %d | €%.2f | €%.2f | €%.0f | %.1f%% | %.1f%% | %s |\n",
 				stock.Ticker,
 				stock.CompanyName,
@@ -545,18 +650,18 @@ func (h *AssessmentHandler) buildPortfolioContext(portfolio []models.Stock, cash
 				weightPercent,
 				stock.ExpectedValue,
 				stock.Assessment)
-			
+
 			// Track sector allocations
 			sectorAllocations[stock.Sector] += weightPercent
 		}
-		
+
 		context += "\n**Current Sector Allocations:**\n"
 		for sector, allocation := range sectorAllocations {
 			context += fmt.Sprintf("- %s: %.1f%%\n", sector, allocation)
 		}
 		context += fmt.Sprintf("\n**Total Portfolio Value:** €%.0f\n", totalPortfolioValue)
 	}
-	
+
 	// Add cash holdings
 	if len(cashHoldings) == 0 {
 		context += "\n**Available Cash:** No cash holdings recorded\n"
@@ -576,13 +681,13 @@ func (h *AssessmentHandler) buildPortfolioContext(portfolio []models.Stock, cash
 		}
 		context += fmt.Sprintf("\n**Total Available Cash:** €%.0f\n", totalCash)
 	}
-	
+
 	context += "\n**IMPORTANT:** Consider this portfolio context when making recommendations. Analyze:\n"
 	context += "- How this new position would affect sector diversification\n"
 	context += "- Whether current sector allocations exceed targets (Healthcare 30-35%, Tech 15%, etc.)\n"
 	context += "- If sufficient cash is available for the recommended position size\n"
 	context += "- How this fits with the overall portfolio risk and Kelly utilization\n"
-	
+
 	return context
 }
 
@@ -592,7 +697,7 @@ func (h *AssessmentHandler) buildAssessmentPrompt(ticker string, portfolio []mod
 	portfolioContext := h.buildPortfolioContext(portfolio, cashHoldings)
 	// Get current date
 	currentDate := time.Now().Format("January 2, 2006")
-	
+
 	return fmt.Sprintf(`CURRENT DATE: %s
 
 IMPORTANT: Please use the most recent available market data and financial information. Access current stock prices, latest quarterly earnings, recent analyst reports, and up-to-date fundamental metrics. If any data appears outdated, please indicate when the information was last updated.
@@ -698,7 +803,7 @@ func (h *AssessmentHandler) cleanupOldAssessments() {
 		if err := h.db.Model(&models.Assessment{}).
 			Select("id").
 			Order("created_at ASC").
-			Limit(int(count - 20)).
+			Limit(int(count-20)).
 			Pluck("id", &idsToDelete).Error; err != nil {
 			h.logger.Error().Err(err).Msg("Failed to get assessment IDs for cleanup")
 			return
