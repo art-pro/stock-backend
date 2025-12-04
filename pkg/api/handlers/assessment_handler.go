@@ -65,7 +65,7 @@ func (h *AssessmentHandler) ExtractFromImages(c *gin.Context) {
 	h.logger.Info().Int("image_count", len(req.Images)).Str("source", req.Source).Msg("Processing images for stock extraction")
 
 	// Create prompt for vision analysis
-	prompt := `Extract stock portfolio data from these screenshots. Return ONLY a JSON array of objects with this exact schema:
+	prompt := `Extract stock portfolio data strictly from the provided screenshots. Do NOT use any external knowledge or data. Return ONLY a JSON array of objects with this exact schema:
 [
   {
     "ticker": "SYMBOL",
@@ -74,7 +74,11 @@ func (h *AssessmentHandler) ExtractFromImages(c *gin.Context) {
     "shares_owned": 10 (number, optional - use 0 if not found)
   }
 ]
-Ensure all numbers are parsed correctly. If a ticker is ambiguous, include the exchange suffix if visible. Do not include any markdown or explanation, just the raw JSON array.`
+Rules:
+1. Extract ONLY data visible in the image.
+2. If a value (like shares owned) is not visible, use 0.
+3. Do not invent or hallucinate tickers or prices.
+4. Return strictly raw JSON array, no markdown formatting.`
 
 	var content string
 	var err error
@@ -164,7 +168,7 @@ func (h *AssessmentHandler) extractWithGrokVision(images []string, prompt string
 	messages[0]["content"] = contentList
 
 	reqBody := map[string]interface{}{
-		"model":       "grok-2-vision-1212", // Use appropriate vision model name
+		"model":       "grok-2-vision-latest", // Use appropriate vision model name
 		"messages":    messages,
 		"stream":      false,
 		"temperature": 0.1, // Low temperature for data extraction
