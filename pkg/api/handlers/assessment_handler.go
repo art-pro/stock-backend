@@ -63,174 +63,161 @@ func (h *AssessmentHandler) ExtractFromImages(c *gin.Context) {
 
 	h.logger.Info().Int("image_count", len(req.Images)).Msg("Processing images for stock extraction")
 
-	// MOCK IMPLEMENTATION: Returns the example JSON as requested
-	// In a real implementation, this would call a Vision LLM (e.g. GPT-4o or Grok Vision)
-	// with the images and a prompt to extract the data in the specified JSON format.
-
-	mockResponse := `[
+	// Create prompt for vision analysis
+	prompt := `Extract stock portfolio data from these screenshots. Return ONLY a JSON array of objects with this exact schema:
+[
   {
-    "ticker": "NOVO.B CPH",
-    "company_name": "NOVO NORDISK A/S-B",
-    "current_price": 306.60,
-    "shares_owned": 80
-  },
-  {
-    "ticker": "IBIT IBIS2",
-    "company_name": "ISHARES BITCOIN ETP",
-    "current_price": 7.9540,
-    "shares_owned": 60
-  },
-  {
-    "ticker": "NEM",
-    "company_name": "NEWMONT CORP",
-    "current_price": 90.76,
-    "shares_owned": 16
-  },
-  {
-    "ticker": "PG",
-    "company_name": "PROCTER & GAMBLE CO/THE",
-    "current_price": 145.00,
-    "shares_owned": 16
-  },
-  {
-    "ticker": "ORCL",
-    "company_name": "ORACLE CORP",
-    "current_price": 204.67,
-    "shares_owned": 14
-  },
-  {
-    "ticker": "UNH",
-    "company_name": "UNITEDHEALTH GROUP INC",
-    "current_price": 325.31,
-    "shares_owned": 8
-  },
-  {
-    "ticker": "MSFT",
-    "company_name": "MICROSOFT CORP",
-    "current_price": 489.73,
-    "shares_owned": 4
-  },
-  {
-    "ticker": "META",
-    "company_name": "META PLATFORMS INC-CLASS A",
-    "current_price": 647.56,
-    "shares_owned": 3
-  },
-  {
-    "ticker": "RHMI IBIS",
-    "company_name": "RHEINMETALL AG",
-    "current_price": 1514.0,
-    "shares_owned": 1
-  },
-  {
-    "ticker": "AAPL",
-    "company_name": "APPLE INC",
-    "current_price": 286.48
-  },
-  {
-    "ticker": "ALV IBIS",
-    "company_name": "ALLIANZ SE-REG",
-    "current_price": 367.2
-  },
-  {
-    "ticker": "AMZN",
-    "company_name": "AMAZON.COM INC",
-    "current_price": 235.39
-  },
-  {
-    "ticker": "ASML AEB",
-    "company_name": "ASML HOLDING NV",
-    "current_price": 957.7
-  },
-  {
-    "ticker": "AVGO",
-    "company_name": "BROADCOM INC",
-    "current_price": 383.40
-  },
-  {
-    "ticker": "BA",
-    "company_name": "BOEING CO/THE",
-    "current_price": 205.21
-  },
-  {
-    "ticker": "BRK B",
-    "company_name": "BERKSHIRE HATHAWAY INC-CL B",
-    "current_price": 506.60
-  },
-  {
-    "ticker": "CHTR",
-    "company_name": "CHARTER COMMUNICATIONS IN...",
-    "current_price": 197.72
-  },
-  {
-    "ticker": "CVX",
-    "company_name": "CHEVRON CORP",
-    "current_price": 151.03
-  },
-  {
-    "ticker": "DE",
-    "company_name": "DEERE & CO",
-    "current_price": 469.15
-  },
-  {
-    "ticker": "ENI BVME",
-    "company_name": "ENI SPA",
-    "current_price": 16.386
-  },
-  {
-    "ticker": "GOOGL",
-    "company_name": "ALPHABET INC-CLA",
-    "current_price": 316.58
-  },
-  {
-    "ticker": "JBHT",
-    "company_name": "HUNT (JB) TRANSPRT SVCS INC",
-    "current_price": 185.73
-  },
-  {
-    "ticker": "LDOS",
-    "company_name": "LEIDOS HOLDINGS INC",
-    "current_price": 187.07
-  },
-  {
-    "ticker": "MOS",
-    "company_name": "MOSAIC CO/THE",
-    "current_price": 24.38
-  },
-  {
-    "ticker": "NKE",
-    "company_name": "NIKE INC -CL B",
-    "current_price": 65.15
-  },
-  {
-    "ticker": "NVDA",
-    "company_name": "NVIDIA CORP",
-    "current_price": 183.29
-  },
-  {
-    "ticker": "PFE",
-    "company_name": "PFIZER INC",
-    "current_price": 25.27
-  },
-  {
-    "ticker": "SIE IBIS",
-    "company_name": "SIEMENS AG-REG",
-    "current_price": 228.50
-  },
-  {
-    "ticker": "V",
-    "company_name": "VISA INC-CLASS A SHARES",
-    "current_price": 329.62
+    "ticker": "SYMBOL",
+    "company_name": "Company Name",
+    "current_price": 123.45 (number),
+    "shares_owned": 10 (number, optional - use 0 if not found)
   }
-]`
+]
+Ensure all numbers are parsed correctly. If a ticker is ambiguous, include the exchange suffix if visible. Do not include any markdown or explanation, just the raw JSON array.`
 
+	var content string
+	var err error
+
+	// Try Grok Vision first if configured
+	if h.cfg.XAIAPIKey != "" {
+		content, err = h.extractWithGrokVision(req.Images, prompt)
+	} 
+	
+	// Fallback to Deepseek (though Deepseek V3 text model can't see images directly, 
+	// we'll assume for this implementation we are using a multimodal endpoint if available,
+	// or failover if Grok failed)
+	if (err != nil || h.cfg.XAIAPIKey == "") && h.cfg.DeepseekAPIKey != "" {
+		// Note: Deepseek currently (as of late 2024) is primarily text-based.
+		// If they add vision support, this would look similar to the Grok implementation.
+		// For now, we'll return an error if Grok is not available as we need a vision model.
+		if err != nil {
+			h.logger.Error().Err(err).Msg("Grok Vision failed")
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Vision processing requires a supported vision model (Grok Vision configured)"})
+		return
+	} else if err != nil {
+		h.logger.Error().Err(err).Msg("Vision processing failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process images: " + err.Error()})
+		return
+	}
+
+	// Clean up response (remove markdown code blocks if present)
+	content = strings.TrimSpace(content)
+	if strings.HasPrefix(content, "```json") {
+		content = strings.TrimPrefix(content, "```json")
+		content = strings.TrimSuffix(content, "```")
+	} else if strings.HasPrefix(content, "```") {
+		content = strings.TrimPrefix(content, "```")
+		content = strings.TrimSuffix(content, "```")
+	}
+	content = strings.TrimSpace(content)
+
+	// Parse result to ensure it's valid JSON
 	var result interface{}
-	if err := json.Unmarshal([]byte(mockResponse), &result); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse mock data"})
+	if err := json.Unmarshal([]byte(content), &result); err != nil {
+		h.logger.Error().Err(err).Str("content", content).Msg("Failed to parse extracted JSON")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse extracted data"})
 		return
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+// extractWithGrokVision uses Grok's vision capabilities to extract data
+func (h *AssessmentHandler) extractWithGrokVision(images []string, prompt string) (string, error) {
+	// Prepare messages with image content
+	messages := []map[string]interface{}{
+		{
+			"role": "user",
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": prompt,
+				},
+			},
+		},
+	}
+
+	// Add images to the content array
+	contentList := messages[0]["content"].([]map[string]interface{})
+	for _, imgBase64 := range images {
+		// Ensure base64 string has data URI prefix
+		if !strings.HasPrefix(imgBase64, "data:image") {
+			// Assume jpeg if not specified, though frontend should send full data URI
+			imgBase64 = "data:image/jpeg;base64," + imgBase64
+		}
+		
+		contentList = append(contentList, map[string]interface{}{
+			"type": "image_url",
+			"image_url": map[string]string{
+				"url": imgBase64,
+			},
+		})
+	}
+	messages[0]["content"] = contentList
+
+	reqBody := map[string]interface{}{
+		"model": "grok-vision-beta", // Use appropriate vision model name
+		"messages": messages,
+		"stream": false,
+		"temperature": 0.1, // Low temperature for data extraction
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", "https://api.x.ai/v1/chat/completions", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.cfg.XAIAPIKey)
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to call Grok API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("Grok API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var grokResp map[string]interface{}
+	if err := json.Unmarshal(body, &grokResp); err != nil {
+		return "", fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	choices, ok := grokResp["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return "", fmt.Errorf("no choices in response")
+	}
+
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid choice format")
+	}
+
+	message, ok := choice["message"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid message format")
+	}
+
+	content, ok := message["content"].(string)
+	if !ok {
+		return "", fmt.Errorf("invalid content format")
+	}
+
+	return content, nil
 }
 
 // RequestAssessment generates a stock assessment using AI
