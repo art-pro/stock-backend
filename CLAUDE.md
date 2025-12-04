@@ -4,7 +4,7 @@
 A Go-based backend API for managing stock portfolios with advanced analytics, multi-currency support, and automated calculations. The system tracks stocks, performs Kelly Criterion calculations, manages exchange rates, and provides portfolio assessments.
 
 **Module:** `github.com/artpro/assessapp`
-**Go Version:** 1.21
+**Go Version:** 1.24
 **Primary Framework:** Gin Web Framework
 
 ## Architecture
