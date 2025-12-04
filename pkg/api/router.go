@@ -58,6 +58,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 	exchangeRateHandler := handlers.NewExchangeRateHandler(db, cfg, logger)
 	cashHandler := handlers.NewCashHandler(db, cfg, logger)
 	assessmentHandler := handlers.NewAssessmentHandler(db, cfg, logger)
+	settingsHandler := handlers.NewSettingsHandler(db, logger)
 
 	// Public routes
 	public := router.Group("/api")
@@ -138,6 +139,10 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 		protected.POST("/assessment/extract-from-images", assessmentHandler.ExtractFromImages)
 		protected.GET("/assessment/recent", assessmentHandler.GetRecentAssessments)
 		protected.GET("/assessment/:id", assessmentHandler.GetAssessmentById)
+
+		// User Settings routes
+		protected.GET("/settings/columns", settingsHandler.GetColumnSettings)
+		protected.POST("/settings/columns", settingsHandler.SaveColumnSettings)
 	}
 
 	return router

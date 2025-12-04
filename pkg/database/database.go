@@ -60,6 +60,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	// Run auto migrations
 	if err := db.AutoMigrate(
 		&models.User{},
+		&models.UserSettings{},
 		&models.Stock{},
 		&models.StockHistory{},
 		&models.DeletedStock{},
