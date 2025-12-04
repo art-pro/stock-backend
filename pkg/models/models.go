@@ -18,9 +18,9 @@ type User struct {
 // UserSettings stores user-specific UI settings like column visibility
 type UserSettings struct {
 	ID        uint      `gorm:"primarykey" json:"id"`
-	UserID    uint      `gorm:"not null;uniqueIndex:idx_user_key" json:"user_id"`
-	Key       string    `gorm:"not null;uniqueIndex:idx_user_key" json:"key"` // e.g., "stock_table_columns"
-	Value     string    `gorm:"type:text" json:"value"`                       // JSON string
+	UserID    uint      `gorm:"not null;uniqueIndex:idx_user_settings_uk" json:"user_id"`
+	Key       string    `gorm:"not null;uniqueIndex:idx_user_settings_uk" json:"key"` // e.g., "stock_table_columns"
+	Value     string    `gorm:"type:text" json:"value"`                               // JSON string
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
