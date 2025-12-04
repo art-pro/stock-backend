@@ -53,8 +53,16 @@ func updateStocksWithFrequency(db *gorm.DB, apiService *services.ExternalAPIServ
 
 	logger.Info().Int("count", len(stocks)).Str("frequency", frequency).Msg("Updating stocks")
 
+	// Fetch settings once before the loop to avoid repeated queries
+	var settings models.PortfolioSettings
+	if err := db.First(&settings).Error; err != nil {
+		logger.Warn().Err(err).Msg("Failed to fetch portfolio settings, using defaults")
+		settings.AlertsEnabled = false
+		settings.AlertThresholdEV = 10.0
+	}
+
 	for i := range stocks {
-		if err := updateStock(db, apiService, &stocks[i], logger); err != nil {
+		if err := updateStock(db, apiService, &stocks[i], logger, &settings); err != nil {
 			logger.Warn().Err(err).Str("ticker", stocks[i].Ticker).Msg("Failed to update stock")
 		} else {
 			logger.Debug().Str("ticker", stocks[i].Ticker).Msg("Stock updated successfully")
@@ -66,7 +74,7 @@ func updateStocksWithFrequency(db *gorm.DB, apiService *services.ExternalAPIServ
 }
 
 // updateStock updates a single stock's data
-func updateStock(db *gorm.DB, apiService *services.ExternalAPIService, stock *models.Stock, logger zerolog.Logger) error {
+func updateStock(db *gorm.DB, apiService *services.ExternalAPIService, stock *models.Stock, logger zerolog.Logger, settings *models.PortfolioSettings) error {
 	oldEV := stock.ExpectedValue
 
 	// Fetch current price
@@ -119,10 +127,7 @@ func updateStock(db *gorm.DB, apiService *services.ExternalAPIService, stock *mo
 	}
 	db.Create(&history)
 
-	// Check for alerts
-	var settings models.PortfolioSettings
-	db.First(&settings)
-
+	// Check for alerts using passed settings (no DB query needed)
 	evChange := stock.ExpectedValue - oldEV
 	if settings.AlertsEnabled && (evChange > settings.AlertThresholdEV || evChange < -settings.AlertThresholdEV) {
 		alert := models.Alert{

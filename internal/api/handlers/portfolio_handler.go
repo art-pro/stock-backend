@@ -62,16 +62,28 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 	// Calculate portfolio metrics
 	metrics := services.CalculatePortfolioMetrics(stocks, fxRates)
 
-	// Update weights for each stock
-	for i := range stocks {
-		fxRate := fxRates[stocks[i].Currency]
-		if fxRate == 0 {
-			fxRate = 1.0
-		}
-		valueUSD := float64(stocks[i].SharesOwned) * stocks[i].CurrentPrice * fxRate
-		if metrics.TotalValue > 0 {
+	// Update weights for each stock (batch update to avoid N+1)
+	if metrics.TotalValue > 0 && len(stocks) > 0 {
+		for i := range stocks {
+			fxRate := fxRates[stocks[i].Currency]
+			if fxRate == 0 {
+				fxRate = 1.0
+			}
+			valueUSD := float64(stocks[i].SharesOwned) * stocks[i].CurrentPrice * fxRate
 			stocks[i].Weight = (valueUSD / metrics.TotalValue) * 100
-			h.db.Save(&stocks[i])
+		}
+
+		// Batch update all stocks at once
+		tx := h.db.Begin()
+		for i := range stocks {
+			if err := tx.Model(&stocks[i]).Update("weight", stocks[i].Weight).Error; err != nil {
+				tx.Rollback()
+				h.logger.Error().Err(err).Msg("Failed to update stock weights")
+				break
+			}
+		}
+		if err := tx.Commit().Error; err != nil {
+			h.logger.Error().Err(err).Msg("Failed to commit stock weight updates")
 		}
 	}
 

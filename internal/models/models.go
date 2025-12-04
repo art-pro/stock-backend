@@ -54,7 +54,7 @@ type Stock struct {
 // StockHistory stores historical calculation data for each stock
 type StockHistory struct {
 	ID                  uint      `gorm:"primarykey" json:"id"`
-	StockID             uint      `gorm:"not null;index" json:"stock_id"`
+	StockID             uint      `gorm:"not null;index:idx_stock_recorded" json:"stock_id"`
 	Ticker              string    `json:"ticker"`
 	CurrentPrice        float64   `json:"current_price"`
 	FairValue           float64   `json:"fair_value"`
@@ -65,12 +65,13 @@ type StockHistory struct {
 	KellyFraction       float64   `json:"kelly_fraction"`
 	Weight              float64   `json:"weight"`
 	Assessment          string    `json:"assessment"`
-	RecordedAt          time.Time `gorm:"index" json:"recorded_at"`
+	RecordedAt          time.Time `gorm:"index:idx_stock_recorded" json:"recorded_at"`
 }
 
 // DeletedStock stores soft-deleted stocks in a log
 type DeletedStock struct {
 	ID           uint           `gorm:"primarykey" json:"id"`
+	PortfolioID  uint           `gorm:"index" json:"portfolio_id"`
 	StockData    string         `gorm:"type:text" json:"stock_data"` // JSON serialized Stock object
 	Ticker       string         `gorm:"index" json:"ticker"`
 	CompanyName  string         `json:"company_name"`
@@ -95,11 +96,11 @@ type PortfolioSettings struct {
 // Alert represents an alert that was triggered
 type Alert struct {
 	ID          uint      `gorm:"primarykey" json:"id"`
-	StockID     uint      `json:"stock_id"`
+	StockID     uint      `gorm:"index" json:"stock_id"`
 	Ticker      string    `json:"ticker"`
 	AlertType   string    `json:"alert_type"`   // ev_change, buy_zone, etc.
 	Message     string    `json:"message"`
-	EmailSent   bool      `json:"email_sent"`
+	EmailSent   bool      `gorm:"index" json:"email_sent"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 

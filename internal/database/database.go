@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/artpro/assessapp/internal/models"
 	"golang.org/x/crypto/bcrypt"
@@ -64,9 +65,25 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&models.DeletedStock{},
 		&models.PortfolioSettings{},
 		&models.Alert{},
+		&models.ExchangeRate{},
+		&models.CashHolding{},
 	); err != nil {
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
+
+	// Configure connection pool for optimal performance
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database instance: %w", err)
+	}
+
+	// Set connection pool settings
+	sqlDB.SetMaxOpenConns(25)                  // Maximum number of open connections
+	sqlDB.SetMaxIdleConns(5)                   // Maximum number of idle connections
+	sqlDB.SetConnMaxLifetime(5 * time.Minute)  // Maximum lifetime of a connection
+	sqlDB.SetConnMaxIdleTime(10 * time.Minute) // Maximum idle time of a connection
+
+	fmt.Println("Database connection pool configured: max_open=25, max_idle=5")
 
 	return db, nil
 }

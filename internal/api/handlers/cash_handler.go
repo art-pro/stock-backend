@@ -50,16 +50,36 @@ func (h *CashHandler) GetAllCashHoldings(c *gin.Context) {
 		return
 	}
 
-	// Update USD values using current exchange rates
-	for i := range cashHoldings {
-		usdValue, err := h.calculateUSDValue(cashHoldings[i].CurrencyCode, cashHoldings[i].Amount)
-		if err != nil {
-			h.logger.Warn().Err(err).Str("currency", cashHoldings[i].CurrencyCode).Msg("Failed to calculate USD value")
-			// Keep existing USD value if calculation fails
-		} else {
+	// Fetch all exchange rates once to avoid N+1 queries
+	rateMap, err := h.getAllExchangeRates()
+	if err != nil {
+		h.logger.Warn().Err(err).Msg("Failed to fetch exchange rates")
+		// Return holdings with existing USD values
+		c.JSON(http.StatusOK, cashHoldings)
+		return
+	}
+
+	// Update USD values using cached exchange rates (batch update to avoid N+1)
+	if len(cashHoldings) > 0 {
+		tx := h.db.Begin()
+		for i := range cashHoldings {
+			usdValue, err := h.calculateUSDValueWithCache(cashHoldings[i].CurrencyCode, cashHoldings[i].Amount, rateMap)
+			if err != nil {
+				h.logger.Warn().Err(err).Str("currency", cashHoldings[i].CurrencyCode).Msg("Failed to calculate USD value")
+				continue
+			}
 			cashHoldings[i].USDValue = usdValue
 			cashHoldings[i].LastUpdated = time.Now()
-			h.db.Save(&cashHoldings[i])
+
+			if err := tx.Model(&cashHoldings[i]).Updates(map[string]interface{}{
+				"usd_value":    usdValue,
+				"last_updated": time.Now(),
+			}).Error; err != nil {
+				h.logger.Warn().Err(err).Uint("id", cashHoldings[i].ID).Msg("Failed to update cash holding")
+			}
+		}
+		if err := tx.Commit().Error; err != nil {
+			h.logger.Error().Err(err).Msg("Failed to commit cash holding updates")
 		}
 	}
 
@@ -200,9 +220,19 @@ func (h *CashHandler) RefreshUSDValues(c *gin.Context) {
 		return
 	}
 
+	// Fetch all exchange rates once to avoid N+1 queries
+	rateMap, err := h.getAllExchangeRates()
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to fetch exchange rates")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch exchange rates"})
+		return
+	}
+
+	// Batch update to avoid N+1
 	updatedCount := 0
+	tx := h.db.Begin()
 	for i := range cashHoldings {
-		usdValue, err := h.calculateUSDValue(cashHoldings[i].CurrencyCode, cashHoldings[i].Amount)
+		usdValue, err := h.calculateUSDValueWithCache(cashHoldings[i].CurrencyCode, cashHoldings[i].Amount, rateMap)
 		if err != nil {
 			h.logger.Warn().Err(err).Str("currency", cashHoldings[i].CurrencyCode).Msg("Failed to calculate USD value")
 			continue
@@ -211,11 +241,20 @@ func (h *CashHandler) RefreshUSDValues(c *gin.Context) {
 		cashHoldings[i].USDValue = usdValue
 		cashHoldings[i].LastUpdated = time.Now()
 
-		if err := h.db.Save(&cashHoldings[i]).Error; err != nil {
+		if err := tx.Model(&cashHoldings[i]).Updates(map[string]interface{}{
+			"usd_value":    usdValue,
+			"last_updated": time.Now(),
+		}).Error; err != nil {
 			h.logger.Warn().Err(err).Uint("id", cashHoldings[i].ID).Msg("Failed to update cash holding USD value")
 			continue
 		}
 		updatedCount++
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		h.logger.Error().Err(err).Msg("Failed to commit USD value updates")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update USD values"})
+		return
 	}
 
 	h.logger.Info().Int("updated_count", updatedCount).Msg("Cash holdings USD values refreshed")
@@ -249,6 +288,47 @@ func (h *CashHandler) calculateUSDValue(currencyCode string, amount float64) (fl
 	// amountInEUR * usdRate.Rate = amount in USD
 	amountInEUR := amount / exchangeRate.Rate
 	usdValue := amountInEUR * usdRate.Rate
+
+	return usdValue, nil
+}
+
+// getAllExchangeRates fetches all exchange rates in a single query
+func (h *CashHandler) getAllExchangeRates() (map[string]float64, error) {
+	var rates []models.ExchangeRate
+	if err := h.db.Find(&rates).Error; err != nil {
+		return nil, err
+	}
+
+	rateMap := make(map[string]float64)
+	for _, rate := range rates {
+		rateMap[rate.CurrencyCode] = rate.Rate
+	}
+	return rateMap, nil
+}
+
+// calculateUSDValueWithCache converts amount from given currency to USD using cached rates
+func (h *CashHandler) calculateUSDValueWithCache(currencyCode string, amount float64, rateMap map[string]float64) (float64, error) {
+	if currencyCode == "USD" {
+		return amount, nil
+	}
+
+	// Get exchange rate for the currency (relative to EUR)
+	exchangeRate, ok := rateMap[currencyCode]
+	if !ok {
+		return 0, gorm.ErrRecordNotFound
+	}
+
+	// Get USD to EUR rate
+	usdRate, ok := rateMap["USD"]
+	if !ok {
+		return 0, gorm.ErrRecordNotFound
+	}
+
+	// Convert: amount in currency -> EUR -> USD
+	// amount / exchangeRate = amount in EUR
+	// amountInEUR * usdRate = amount in USD
+	amountInEUR := amount / exchangeRate
+	usdValue := amountInEUR * usdRate
 
 	return usdValue, nil
 }
