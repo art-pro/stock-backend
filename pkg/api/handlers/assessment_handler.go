@@ -48,6 +48,191 @@ func NewAssessmentHandler(db *gorm.DB, cfg *config.Config, logger zerolog.Logger
 	}
 }
 
+// ExtractFromImagesRequest represents the request for image extraction
+type ExtractFromImagesRequest struct {
+	Images []string `json:"images" binding:"required"`
+}
+
+// ExtractFromImages extracts stock data from uploaded images
+func (h *AssessmentHandler) ExtractFromImages(c *gin.Context) {
+	var req ExtractFromImagesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	h.logger.Info().Int("image_count", len(req.Images)).Msg("Processing images for stock extraction")
+
+	// MOCK IMPLEMENTATION: Returns the example JSON as requested
+	// In a real implementation, this would call a Vision LLM (e.g. GPT-4o or Grok Vision)
+	// with the images and a prompt to extract the data in the specified JSON format.
+
+	mockResponse := `[
+  {
+    "ticker": "NOVO.B CPH",
+    "company_name": "NOVO NORDISK A/S-B",
+    "current_price": 306.60,
+    "shares_owned": 80
+  },
+  {
+    "ticker": "IBIT IBIS2",
+    "company_name": "ISHARES BITCOIN ETP",
+    "current_price": 7.9540,
+    "shares_owned": 60
+  },
+  {
+    "ticker": "NEM",
+    "company_name": "NEWMONT CORP",
+    "current_price": 90.76,
+    "shares_owned": 16
+  },
+  {
+    "ticker": "PG",
+    "company_name": "PROCTER & GAMBLE CO/THE",
+    "current_price": 145.00,
+    "shares_owned": 16
+  },
+  {
+    "ticker": "ORCL",
+    "company_name": "ORACLE CORP",
+    "current_price": 204.67,
+    "shares_owned": 14
+  },
+  {
+    "ticker": "UNH",
+    "company_name": "UNITEDHEALTH GROUP INC",
+    "current_price": 325.31,
+    "shares_owned": 8
+  },
+  {
+    "ticker": "MSFT",
+    "company_name": "MICROSOFT CORP",
+    "current_price": 489.73,
+    "shares_owned": 4
+  },
+  {
+    "ticker": "META",
+    "company_name": "META PLATFORMS INC-CLASS A",
+    "current_price": 647.56,
+    "shares_owned": 3
+  },
+  {
+    "ticker": "RHMI IBIS",
+    "company_name": "RHEINMETALL AG",
+    "current_price": 1514.0,
+    "shares_owned": 1
+  },
+  {
+    "ticker": "AAPL",
+    "company_name": "APPLE INC",
+    "current_price": 286.48
+  },
+  {
+    "ticker": "ALV IBIS",
+    "company_name": "ALLIANZ SE-REG",
+    "current_price": 367.2
+  },
+  {
+    "ticker": "AMZN",
+    "company_name": "AMAZON.COM INC",
+    "current_price": 235.39
+  },
+  {
+    "ticker": "ASML AEB",
+    "company_name": "ASML HOLDING NV",
+    "current_price": 957.7
+  },
+  {
+    "ticker": "AVGO",
+    "company_name": "BROADCOM INC",
+    "current_price": 383.40
+  },
+  {
+    "ticker": "BA",
+    "company_name": "BOEING CO/THE",
+    "current_price": 205.21
+  },
+  {
+    "ticker": "BRK B",
+    "company_name": "BERKSHIRE HATHAWAY INC-CL B",
+    "current_price": 506.60
+  },
+  {
+    "ticker": "CHTR",
+    "company_name": "CHARTER COMMUNICATIONS IN...",
+    "current_price": 197.72
+  },
+  {
+    "ticker": "CVX",
+    "company_name": "CHEVRON CORP",
+    "current_price": 151.03
+  },
+  {
+    "ticker": "DE",
+    "company_name": "DEERE & CO",
+    "current_price": 469.15
+  },
+  {
+    "ticker": "ENI BVME",
+    "company_name": "ENI SPA",
+    "current_price": 16.386
+  },
+  {
+    "ticker": "GOOGL",
+    "company_name": "ALPHABET INC-CLA",
+    "current_price": 316.58
+  },
+  {
+    "ticker": "JBHT",
+    "company_name": "HUNT (JB) TRANSPRT SVCS INC",
+    "current_price": 185.73
+  },
+  {
+    "ticker": "LDOS",
+    "company_name": "LEIDOS HOLDINGS INC",
+    "current_price": 187.07
+  },
+  {
+    "ticker": "MOS",
+    "company_name": "MOSAIC CO/THE",
+    "current_price": 24.38
+  },
+  {
+    "ticker": "NKE",
+    "company_name": "NIKE INC -CL B",
+    "current_price": 65.15
+  },
+  {
+    "ticker": "NVDA",
+    "company_name": "NVIDIA CORP",
+    "current_price": 183.29
+  },
+  {
+    "ticker": "PFE",
+    "company_name": "PFIZER INC",
+    "current_price": 25.27
+  },
+  {
+    "ticker": "SIE IBIS",
+    "company_name": "SIEMENS AG-REG",
+    "current_price": 228.50
+  },
+  {
+    "ticker": "V",
+    "company_name": "VISA INC-CLASS A SHARES",
+    "current_price": 329.62
+  }
+]`
+
+	var result interface{}
+	if err := json.Unmarshal([]byte(mockResponse), &result); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse mock data"})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
 // RequestAssessment generates a stock assessment using AI
 func (h *AssessmentHandler) RequestAssessment(c *gin.Context) {
 	var req AssessmentRequest

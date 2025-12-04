@@ -135,6 +135,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 
 		// Assessment routes
 		protected.POST("/assessment/request", assessmentHandler.RequestAssessment)
+		protected.POST("/assessment/extract-from-images", assessmentHandler.ExtractFromImages)
 		protected.GET("/assessment/recent", assessmentHandler.GetRecentAssessments)
 		protected.GET("/assessment/:id", assessmentHandler.GetAssessmentById)
 	}
