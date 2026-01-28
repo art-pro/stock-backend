@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/artpro/assessapp/pkg/models"
+	"github.com/art-pro/stock-backend/pkg/models"
 )
 
 func assertClose(t *testing.T, got, want, tol float64, field string) {
