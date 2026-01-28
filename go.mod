@@ -1,6 +1,6 @@
 module github.com/art-pro/stock-backend
 
-go 1.24.11
+go 1.21
 
 require (
 	github.com/gin-contrib/cors v1.7.6

@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.dylib
+assessapp
 bin/
 dist/
 
@@ -48,4 +49,3 @@ Thumbs.db
 
 # Vercel
 .vercel
-
