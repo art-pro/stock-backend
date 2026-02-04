@@ -61,6 +61,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	if err := db.AutoMigrate(
 		&models.User{},
 		&models.UserSettings{},
+		&models.Portfolio{},
 		&models.Stock{},
 		&models.StockHistory{},
 		&models.DeletedStock{},
@@ -132,11 +133,17 @@ func InitializeAdminUser(db *gorm.DB, username, password string) error {
 
 // InitializePortfolioSettings creates default portfolio settings if none exist
 func InitializePortfolioSettings(db *gorm.DB) error {
+	portfolioID, err := GetDefaultPortfolioID(db)
+	if err != nil {
+		return fmt.Errorf("failed to resolve default portfolio: %w", err)
+	}
+
 	var settings models.PortfolioSettings
-	result := db.First(&settings)
+	result := db.Where("portfolio_id = ?", portfolioID).First(&settings)
 
 	if result.Error == gorm.ErrRecordNotFound {
 		settings = models.PortfolioSettings{
+			PortfolioID:         portfolioID,
 			TotalPortfolioValue: 0,
 			UpdateFrequency:     "daily",
 			AlertsEnabled:       true,

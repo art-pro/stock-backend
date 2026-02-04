@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/art-pro/stock-backend/pkg/config"
+	"github.com/art-pro/stock-backend/pkg/database"
 	"github.com/art-pro/stock-backend/pkg/models"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
@@ -99,7 +100,15 @@ func (h *CashHandler) CreateCashHolding(c *gin.Context) {
 		return
 	}
 
+	portfolioID, err := database.GetDefaultPortfolioID(h.db)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to resolve default portfolio")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No default portfolio found"})
+		return
+	}
+
 	cashHolding := models.CashHolding{
+		PortfolioID:  portfolioID,
 		CurrencyCode: req.CurrencyCode,
 		Amount:       req.Amount,
 		USDValue:     usdValue,

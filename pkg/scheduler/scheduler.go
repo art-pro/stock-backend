@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/art-pro/stock-backend/pkg/config"
+	"github.com/art-pro/stock-backend/pkg/database"
 	"github.com/art-pro/stock-backend/pkg/models"
 	"github.com/art-pro/stock-backend/pkg/services"
 	"github.com/go-co-op/gocron"
@@ -110,6 +111,7 @@ func updateStock(db *gorm.DB, apiService *services.ExternalAPIService, stock *mo
 	// Create history entry
 	history := models.StockHistory{
 		StockID:             stock.ID,
+		PortfolioID:         stock.PortfolioID,
 		Ticker:              stock.Ticker,
 		CurrentPrice:        stock.CurrentPrice,
 		FairValue:           stock.FairValue,
@@ -126,17 +128,18 @@ func updateStock(db *gorm.DB, apiService *services.ExternalAPIService, stock *mo
 
 	// Check for alerts
 	var settings models.PortfolioSettings
-	db.First(&settings)
+	db.Where("portfolio_id = ?", stock.PortfolioID).First(&settings)
 
 	evChange := stock.ExpectedValue - oldEV
 	if settings.AlertsEnabled && (evChange > settings.AlertThresholdEV || evChange < -settings.AlertThresholdEV) {
 		alert := models.Alert{
-			StockID:   stock.ID,
-			Ticker:    stock.Ticker,
-			AlertType: "ev_change",
-			Message:   "EV changed from " + formatFloat(oldEV) + "% to " + formatFloat(stock.ExpectedValue) + "%",
-			EmailSent: false,
-			CreatedAt: time.Now(),
+			PortfolioID: stock.PortfolioID,
+			StockID:     stock.ID,
+			Ticker:      stock.Ticker,
+			AlertType:   "ev_change",
+			Message:     "EV changed from " + formatFloat(oldEV) + "% to " + formatFloat(stock.ExpectedValue) + "%",
+			EmailSent:   false,
+			CreatedAt:   time.Now(),
 		}
 		db.Create(&alert)
 	}
@@ -144,12 +147,13 @@ func updateStock(db *gorm.DB, apiService *services.ExternalAPIService, stock *mo
 	// Check if in buy zone
 	if stock.CurrentPrice >= stock.BuyZoneMin && stock.CurrentPrice <= stock.BuyZoneMax {
 		alert := models.Alert{
-			StockID:   stock.ID,
-			Ticker:    stock.Ticker,
-			AlertType: "buy_zone",
-			Message:   stock.Ticker + " is in buy zone at " + formatFloat(stock.CurrentPrice),
-			EmailSent: false,
-			CreatedAt: time.Now(),
+			PortfolioID: stock.PortfolioID,
+			StockID:     stock.ID,
+			Ticker:      stock.Ticker,
+			AlertType:   "buy_zone",
+			Message:     stock.Ticker + " is in buy zone at " + formatFloat(stock.CurrentPrice),
+			EmailSent:   false,
+			CreatedAt:   time.Now(),
 		}
 		db.Create(&alert)
 	}
@@ -159,15 +163,21 @@ func updateStock(db *gorm.DB, apiService *services.ExternalAPIService, stock *mo
 
 // checkAndSendAlerts checks for unsent alerts and sends emails
 func checkAndSendAlerts(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) {
+	portfolioID, err := database.GetDefaultPortfolioID(db)
+	if err != nil {
+		logger.Warn().Err(err).Msg("Failed to resolve default portfolio for alerts")
+		return
+	}
+
 	var settings models.PortfolioSettings
-	db.First(&settings)
+	db.Where("portfolio_id = ?", portfolioID).First(&settings)
 
 	if !settings.AlertsEnabled {
 		return
 	}
 
 	var alerts []models.Alert
-	if err := db.Where("email_sent = ?", false).Find(&alerts).Error; err != nil {
+	if err := db.Where("email_sent = ? AND portfolio_id = ?", false, portfolioID).Find(&alerts).Error; err != nil {
 		logger.Error().Err(err).Msg("Failed to fetch unsent alerts")
 		return
 	}

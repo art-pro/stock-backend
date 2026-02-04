@@ -52,6 +52,11 @@ func initialize() {
 			return
 		}
 
+		// Ensure a default portfolio exists
+		if _, err := database.EnsureDefaultPortfolio(db, cfg.AdminUsername); err != nil {
+			logger.Warn().Err(err).Msg("Failed to ensure default portfolio")
+		}
+
 		// Initialize portfolio settings
 		if err := database.InitializePortfolioSettings(db); err != nil {
 			logger.Warn().Err(err).Msg("Failed to initialize portfolio settings")

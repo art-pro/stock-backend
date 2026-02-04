@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/art-pro/stock-backend/pkg/config"
+	"github.com/art-pro/stock-backend/pkg/database"
 	"github.com/art-pro/stock-backend/pkg/models"
 	"github.com/art-pro/stock-backend/pkg/services"
 	"github.com/gin-gonic/gin"
@@ -78,6 +79,7 @@ type CreateStockRequest struct {
 	AvgPriceLocal       float64 `json:"avg_price_local"`
 	UpdateFrequency     string  `json:"update_frequency"`
 	ProbabilityPositive float64 `json:"probability_positive"` // Optional manual input
+	PortfolioID         uint    `json:"portfolio_id"`
 }
 
 // CreateStock creates a new stock and triggers initial calculations
@@ -115,6 +117,18 @@ func (h *StockHandler) CreateStock(c *gin.Context) {
 	}
 	if stock.ProbabilityPositive == 0 {
 		stock.ProbabilityPositive = 0.65 // Default conservative value
+	}
+
+	if req.PortfolioID != 0 {
+		stock.PortfolioID = req.PortfolioID
+	} else {
+		portfolioID, err := database.GetDefaultPortfolioID(h.db)
+		if err != nil {
+			h.logger.Error().Err(err).Msg("Failed to resolve default portfolio")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "No default portfolio found"})
+			return
+		}
+		stock.PortfolioID = portfolioID
 	}
 
 	// Fetch all stock data from Grok in one call (includes ALL calculations!)
@@ -161,6 +175,7 @@ func (h *StockHandler) CreateStock(c *gin.Context) {
 	// Create initial history entry
 	history := models.StockHistory{
 		StockID:             stock.ID,
+		PortfolioID:         stock.PortfolioID,
 		Ticker:              stock.Ticker,
 		CurrentPrice:        stock.CurrentPrice,
 		FairValue:           stock.FairValue,
@@ -599,6 +614,7 @@ func (h *StockHandler) updateStockDataWithSource(stock *models.Stock, source str
 	// Create history entry
 	history := models.StockHistory{
 		StockID:             stock.ID,
+		PortfolioID:         stock.PortfolioID,
 		Ticker:              stock.Ticker,
 		CurrentPrice:        stock.CurrentPrice,
 		FairValue:           stock.FairValue,
@@ -617,12 +633,13 @@ func (h *StockHandler) updateStockDataWithSource(stock *models.Stock, source str
 	evChange := stock.ExpectedValue - oldEV
 	if evChange > 10.0 || evChange < -10.0 {
 		alert := models.Alert{
-			StockID:   stock.ID,
-			Ticker:    stock.Ticker,
-			AlertType: "ev_change",
-			Message:   "EV changed by " + strconv.FormatFloat(evChange, 'f', 2, 64) + "%",
-			EmailSent: false,
-			CreatedAt: time.Now(),
+			PortfolioID: stock.PortfolioID,
+			StockID:     stock.ID,
+			Ticker:      stock.Ticker,
+			AlertType:   "ev_change",
+			Message:     "EV changed by " + strconv.FormatFloat(evChange, 'f', 2, 64) + "%",
+			EmailSent:   false,
+			CreatedAt:   time.Now(),
 		}
 		h.db.Create(&alert)
 	}

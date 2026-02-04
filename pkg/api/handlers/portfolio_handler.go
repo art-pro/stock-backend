@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/art-pro/stock-backend/pkg/config"
+	"github.com/art-pro/stock-backend/pkg/database"
 	"github.com/art-pro/stock-backend/pkg/models"
 	"github.com/art-pro/stock-backend/pkg/services"
 	"github.com/gin-gonic/gin"
@@ -87,11 +88,19 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 
 // GetSettings returns portfolio settings
 func (h *PortfolioHandler) GetSettings(c *gin.Context) {
+	portfolioID, err := database.GetDefaultPortfolioID(h.db)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to resolve default portfolio")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No default portfolio found"})
+		return
+	}
+
 	var settings models.PortfolioSettings
-	if err := h.db.First(&settings).Error; err != nil {
+	if err := h.db.Where("portfolio_id = ?", portfolioID).First(&settings).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			// Create default settings
 			settings = models.PortfolioSettings{
+				PortfolioID:      portfolioID,
 				UpdateFrequency:  "daily",
 				AlertsEnabled:    true,
 				AlertThresholdEV: 10.0,
@@ -172,10 +181,17 @@ func (h *PortfolioHandler) UpdateSettings(c *gin.Context) {
 		return
 	}
 
+	portfolioID, err := database.GetDefaultPortfolioID(h.db)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to resolve default portfolio")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No default portfolio found"})
+		return
+	}
+
 	var settings models.PortfolioSettings
-	if err := h.db.First(&settings).Error; err != nil {
+	if err := h.db.Where("portfolio_id = ?", portfolioID).First(&settings).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			settings = models.PortfolioSettings{}
+			settings = models.PortfolioSettings{PortfolioID: portfolioID}
 			h.db.Create(&settings)
 		} else {
 			h.logger.Error().Err(err).Msg("Failed to fetch settings")
