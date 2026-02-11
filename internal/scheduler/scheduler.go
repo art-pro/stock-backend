@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/art-pro/stock-backend/internal/config"
@@ -192,5 +193,5 @@ func checkAndSendAlerts(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) 
 }
 
 func formatFloat(f float64) string {
-	return string(rune(int(f*100))) + "." + string(rune(int(f*100)%100))
+	return fmt.Sprintf("%.2f", f)
 }
