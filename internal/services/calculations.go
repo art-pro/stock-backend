@@ -114,12 +114,12 @@ func CalculatePortfolioMetrics(stocks []models.Stock, fxRates map[string]float64
 
 		fxRate := fxRates[stock.Currency]
 		if fxRate == 0 {
-			fxRate = 1.0
+			fxRate = 1.0 // Default to EUR base if no rate is available.
 		}
 
-		valueUSD := float64(stock.SharesOwned) * stock.CurrentPrice * fxRate
-		stockValues[i] = valueUSD
-		totalValue += valueUSD
+		valueEUR := float64(stock.SharesOwned) * stock.CurrentPrice / fxRate
+		stockValues[i] = valueEUR
+		totalValue += valueEUR
 	}
 
 	var weightedEV float64

@@ -42,17 +42,25 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 		return
 	}
 
-	// Fetch exchange rates from our exchange rate service
+	// Refresh rates from API first, then read current rate map from DB.
+	if err := h.exchangeRateService.FetchLatestRates(); err != nil {
+		h.logger.Warn().Err(err).Msg("Failed to refresh exchange rates from API, using latest stored rates")
+	}
+
 	fxRates, err := h.exchangeRateService.GetRatesMap()
 	if err != nil {
-		h.logger.Warn().Err(err).Msg("Failed to fetch exchange rates from database")
-		// Use fallback rates
-		fxRates = make(map[string]float64)
-		fxRates["EUR"] = 1.0
-		fxRates["USD"] = 1.154
-		fxRates["DKK"] = 7.4604
-		fxRates["GBP"] = 0.8796
-		fxRates["RUB"] = 93.7594
+		h.logger.Error().Err(err).Msg("Failed to fetch exchange rates from database")
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch exchange rates"})
+		return
+	}
+	if len(fxRates) == 0 {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "No exchange rates available"})
+		return
+	}
+
+	usdRate := fxRates["USD"]
+	if usdRate == 0 {
+		usdRate = 1.0
 	}
 
 	// Calculate portfolio metrics
@@ -72,7 +80,7 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 		valueEUR := float64(stocks[i].SharesOwned) * stocks[i].CurrentPrice / fxRate
 		if metrics.TotalValue > 0 {
 			stocks[i].Weight = (valueEUR / metrics.TotalValue) * 100
-			stocks[i].CurrentValueUSD = valueEUR * fxRates["USD"] // Store in USD for backward compatibility
+			stocks[i].CurrentValueUSD = valueEUR * usdRate // Store in USD for backward compatibility
 			h.db.Save(&stocks[i])
 		}
 	}

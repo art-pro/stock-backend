@@ -98,12 +98,12 @@ func TestCalculatePortfolioMetrics(t *testing.T) {
 
 	metrics := CalculatePortfolioMetrics(stocks, fxRates)
 
-	assertClose(t, metrics.TotalValue, 3000, 0.01, "TotalValue")
-	assertClose(t, metrics.OverallEV, 2.3333, 0.01, "OverallEV")
-	assertClose(t, metrics.WeightedVolatility, 16.6667, 0.01, "WeightedVolatility")
-	assertClose(t, metrics.SharpeRatio, -0.1, 0.01, "SharpeRatio")
+	assertClose(t, metrics.TotalValue, 1500, 0.01, "TotalValue")
+	assertClose(t, metrics.OverallEV, 3.6667, 0.01, "OverallEV")
+	assertClose(t, metrics.WeightedVolatility, 13.3333, 0.01, "WeightedVolatility")
+	assertClose(t, metrics.SharpeRatio, -0.025, 0.01, "SharpeRatio")
 	assertClose(t, metrics.KellyUtilization, 100, 0.01, "KellyUtilization")
 
-	assertClose(t, metrics.SectorWeights["Tech"], 33.3333, 0.05, "SectorWeights[Tech]")
-	assertClose(t, metrics.SectorWeights["Health"], 66.6667, 0.05, "SectorWeights[Health]")
+	assertClose(t, metrics.SectorWeights["Tech"], 66.6667, 0.05, "SectorWeights[Tech]")
+	assertClose(t, metrics.SectorWeights["Health"], 33.3333, 0.05, "SectorWeights[Health]")
 }

@@ -53,10 +53,9 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 	// Fetch exchange rates
 	fxRates, err := h.apiService.FetchAllExchangeRates(currencies)
 	if err != nil {
-		h.logger.Warn().Err(err).Msg("Failed to fetch exchange rates")
-		// Continue with default rates
-		fxRates = make(map[string]float64)
-		fxRates["USD"] = 1.0
+		h.logger.Error().Err(err).Msg("Failed to fetch exchange rates from API")
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch exchange rates"})
+		return
 	}
 
 	// Calculate portfolio metrics
