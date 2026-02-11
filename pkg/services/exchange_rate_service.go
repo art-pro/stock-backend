@@ -22,10 +22,16 @@ type ExchangeRateService struct {
 
 // NewExchangeRateService creates a new exchange rate service
 func NewExchangeRateService(db *gorm.DB, logger zerolog.Logger) *ExchangeRateService {
+	apiKey := os.Getenv("EXCHANGE_RATES_API_KEY")
+	if apiKey == "" {
+		// Backward-compatible fallback for older deployments.
+		apiKey = os.Getenv("EXCHANGE_RATE_API_KEY")
+	}
+
 	return &ExchangeRateService{
 		db:     db,
 		logger: logger,
-		apiKey: os.Getenv("EXCHANGE_RATE_API_KEY"),
+		apiKey: apiKey,
 	}
 }
 

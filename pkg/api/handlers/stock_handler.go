@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,26 +19,70 @@ import (
 
 // StockHandler handles stock-related requests
 type StockHandler struct {
-	db         *gorm.DB
-	cfg        *config.Config
-	logger     zerolog.Logger
-	apiService *services.ExternalAPIService
+	db                  *gorm.DB
+	cfg                 *config.Config
+	logger              zerolog.Logger
+	apiService          *services.ExternalAPIService
+	exchangeRateService *services.ExchangeRateService
 }
 
 // NewStockHandler creates a new stock handler
 func NewStockHandler(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *StockHandler {
 	return &StockHandler{
-		db:         db,
-		cfg:        cfg,
-		logger:     logger,
-		apiService: services.NewExternalAPIService(cfg),
+		db:                  db,
+		cfg:                 cfg,
+		logger:              logger,
+		apiService:          services.NewExternalAPIService(cfg),
+		exchangeRateService: services.NewExchangeRateService(db, logger),
 	}
+}
+
+func (h *StockHandler) updateStockUSDValues(stock *models.Stock) error {
+	amountLocal := float64(stock.SharesOwned) * stock.CurrentPrice
+	costLocal := float64(stock.SharesOwned) * stock.AvgPriceLocal
+
+	valueEUR, err := h.exchangeRateService.ConvertToEUR(amountLocal, stock.Currency)
+	if err != nil {
+		return err
+	}
+	costEUR, err := h.exchangeRateService.ConvertToEUR(costLocal, stock.Currency)
+	if err != nil {
+		return err
+	}
+	usdRate, err := h.exchangeRateService.GetRate("USD")
+	if err != nil {
+		return err
+	}
+	if usdRate <= 0 {
+		return fmt.Errorf("invalid USD exchange rate")
+	}
+
+	stock.CurrentValueUSD = valueEUR * usdRate
+	stock.UnrealizedPnL = (valueEUR - costEUR) * usdRate
+	return nil
+}
+
+func (h *StockHandler) resolvePortfolioID(c *gin.Context) (uint, error) {
+	if portfolioIDParam := c.Query("portfolio_id"); portfolioIDParam != "" {
+		parsed, err := strconv.ParseUint(portfolioIDParam, 10, 32)
+		if err != nil {
+			return 0, err
+		}
+		return uint(parsed), nil
+	}
+	return database.GetDefaultPortfolioID(h.db)
 }
 
 // GetAllStocks returns all stocks
 func (h *StockHandler) GetAllStocks(c *gin.Context) {
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
 	var stocks []models.Stock
-	if err := h.db.Find(&stocks).Error; err != nil {
+	if err := h.db.Where("portfolio_id = ?", portfolioID).Find(&stocks).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to fetch stocks")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch stocks"})
 		return
@@ -53,9 +98,14 @@ func (h *StockHandler) GetAllStocks(c *gin.Context) {
 // GetStock returns a single stock
 func (h *StockHandler) GetStock(c *gin.Context) {
 	id := c.Param("id")
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
 
 	var stock models.Stock
-	if err := h.db.First(&stock, id).Error; err != nil {
+	if err := h.db.Where("id = ? AND portfolio_id = ?", id, portfolioID).First(&stock).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
 		} else {
@@ -87,13 +137,6 @@ func (h *StockHandler) CreateStock(c *gin.Context) {
 	var req CreateStockRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-		return
-	}
-
-	// Check if stock already exists
-	var existing models.Stock
-	if err := h.db.Where("ticker = ?", req.Ticker).First(&existing).Error; err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "Stock with this ticker already exists"})
 		return
 	}
 
@@ -131,6 +174,13 @@ func (h *StockHandler) CreateStock(c *gin.Context) {
 		stock.PortfolioID = portfolioID
 	}
 
+	// Check if stock already exists in this portfolio.
+	var existing models.Stock
+	if err := h.db.Where("ticker = ? AND portfolio_id = ?", req.Ticker, stock.PortfolioID).First(&existing).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Stock with this ticker already exists in the selected portfolio"})
+		return
+	}
+
 	// Fetch all stock data from Grok in one call (includes ALL calculations!)
 	// With automatic fallback to mock data that also includes calculations
 	if err := h.apiService.FetchAllStockData(&stock); err != nil {
@@ -151,17 +201,11 @@ func (h *StockHandler) CreateStock(c *gin.Context) {
 	// - KellyFraction, HalfKellySuggested
 	// - BuyZoneMin, BuyZoneMax, Assessment
 
-	// Get FX rate for USD conversion
-	fxRate, err := h.apiService.FetchExchangeRate(stock.Currency)
-	if err != nil {
-		h.logger.Warn().Err(err).Str("currency", stock.Currency).Msg("Failed to fetch FX rate")
-		fxRate = 1.0
+	if err := h.updateStockUSDValues(&stock); err != nil {
+		h.logger.Error().Err(err).Str("currency", stock.Currency).Msg("Failed to convert stock values using exchange rates")
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to convert stock values using exchange rates"})
+		return
 	}
-
-	// Calculate USD values
-	stock.CurrentValueUSD = float64(stock.SharesOwned) * stock.CurrentPrice * fxRate
-	costBasis := float64(stock.SharesOwned) * stock.AvgPriceLocal * fxRate
-	stock.UnrealizedPnL = stock.CurrentValueUSD - costBasis
 
 	stock.LastUpdated = time.Now()
 
@@ -198,9 +242,14 @@ func (h *StockHandler) CreateStock(c *gin.Context) {
 // UpdateStock updates an existing stock
 func (h *StockHandler) UpdateStock(c *gin.Context) {
 	id := c.Param("id")
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
 
 	var stock models.Stock
-	if err := h.db.First(&stock, id).Error; err != nil {
+	if err := h.db.Where("id = ? AND portfolio_id = ?", id, portfolioID).First(&stock).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
 		return
 	}
@@ -230,9 +279,14 @@ func (h *StockHandler) UpdateStock(c *gin.Context) {
 // UpdateStockPrice updates just the current price and recalculates metrics
 func (h *StockHandler) UpdateStockPrice(c *gin.Context) {
 	id := c.Param("id")
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
 
 	var stock models.Stock
-	if err := h.db.First(&stock, id).Error; err != nil {
+	if err := h.db.Where("id = ? AND portfolio_id = ?", id, portfolioID).First(&stock).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
 		return
 	}
@@ -252,17 +306,11 @@ func (h *StockHandler) UpdateStockPrice(c *gin.Context) {
 	// Recalculate all derived metrics based on new price
 	services.CalculateMetrics(&stock)
 
-	// Get FX rate for USD conversion
-	fxRate, err := h.apiService.FetchExchangeRate(stock.Currency)
-	if err != nil {
-		h.logger.Warn().Err(err).Str("currency", stock.Currency).Msg("Failed to fetch FX rate")
-		fxRate = 1.0
+	if err := h.updateStockUSDValues(&stock); err != nil {
+		h.logger.Error().Err(err).Str("currency", stock.Currency).Msg("Failed to convert stock values using exchange rates")
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to convert stock values using exchange rates"})
+		return
 	}
-
-	// Recalculate USD values
-	stock.CurrentValueUSD = float64(stock.SharesOwned) * stock.CurrentPrice * fxRate
-	costBasis := float64(stock.SharesOwned) * stock.AvgPriceLocal * fxRate
-	stock.UnrealizedPnL = stock.CurrentValueUSD - costBasis
 
 	// Save to database
 	if err := h.db.Save(&stock).Error; err != nil {
@@ -279,9 +327,14 @@ func (h *StockHandler) UpdateStockPrice(c *gin.Context) {
 // UpdateStockField updates a single field (avg_price_local, fair_value, shares_owned) and recalculates metrics
 func (h *StockHandler) UpdateStockField(c *gin.Context) {
 	id := c.Param("id")
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
 
 	var stock models.Stock
-	if err := h.db.First(&stock, id).Error; err != nil {
+	if err := h.db.Where("id = ? AND portfolio_id = ?", id, portfolioID).First(&stock).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
 		return
 	}
@@ -417,17 +470,11 @@ func (h *StockHandler) UpdateStockField(c *gin.Context) {
 	if req.Field != "comment" && req.Field != "company_name" && req.Field != "sector" && req.Field != "update_frequency" && req.Field != "isin" {
 		services.CalculateMetrics(&stock)
 
-		// Get FX rate for USD conversion
-		fxRate, err := h.apiService.FetchExchangeRate(stock.Currency)
-		if err != nil {
-			h.logger.Warn().Err(err).Str("currency", stock.Currency).Msg("Failed to fetch FX rate")
-			fxRate = 1.0
+		if err := h.updateStockUSDValues(&stock); err != nil {
+			h.logger.Error().Err(err).Str("currency", stock.Currency).Msg("Failed to convert stock values using exchange rates")
+			c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to convert stock values using exchange rates"})
+			return
 		}
-
-		// Recalculate USD values
-		stock.CurrentValueUSD = float64(stock.SharesOwned) * stock.CurrentPrice * fxRate
-		costBasis := float64(stock.SharesOwned) * stock.AvgPriceLocal * fxRate
-		stock.UnrealizedPnL = stock.CurrentValueUSD - costBasis
 	}
 
 	// Save to database
@@ -446,9 +493,14 @@ func (h *StockHandler) UpdateStockField(c *gin.Context) {
 func (h *StockHandler) DeleteStock(c *gin.Context) {
 	id := c.Param("id")
 	username, _ := c.Get("username")
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
 
 	var stock models.Stock
-	if err := h.db.First(&stock, id).Error; err != nil {
+	if err := h.db.Where("id = ? AND portfolio_id = ?", id, portfolioID).First(&stock).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
 		return
 	}
@@ -475,15 +527,29 @@ func (h *StockHandler) DeleteStock(c *gin.Context) {
 		DeletedBy:   username.(string),
 	}
 
-	if err := h.db.Create(&deletedStock).Error; err != nil {
+	tx := h.db.Begin()
+	if tx.Error != nil {
+		h.logger.Error().Err(tx.Error).Msg("Failed to start transaction for stock deletion")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete stock"})
+		return
+	}
+
+	if err := tx.Create(&deletedStock).Error; err != nil {
+		tx.Rollback()
 		h.logger.Error().Err(err).Msg("Failed to create deleted stock log")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete stock"})
 		return
 	}
 
-	// Delete the stock
-	if err := h.db.Delete(&stock).Error; err != nil {
+	if err := tx.Delete(&stock).Error; err != nil {
+		tx.Rollback()
 		h.logger.Error().Err(err).Msg("Failed to delete stock")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete stock"})
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		h.logger.Error().Err(err).Msg("Failed to commit stock deletion transaction")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete stock"})
 		return
 	}
@@ -495,8 +561,14 @@ func (h *StockHandler) DeleteStock(c *gin.Context) {
 
 // UpdateAllStocks updates prices and calculations for all stocks
 func (h *StockHandler) UpdateAllStocks(c *gin.Context) {
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
 	var stocks []models.Stock
-	if err := h.db.Find(&stocks).Error; err != nil {
+	if err := h.db.Where("portfolio_id = ?", portfolioID).Find(&stocks).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to fetch stocks")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch stocks"})
 		return
@@ -528,9 +600,14 @@ func (h *StockHandler) UpdateAllStocks(c *gin.Context) {
 func (h *StockHandler) UpdateSingleStock(c *gin.Context) {
 	id := c.Param("id")
 	source := c.Query("source") // Optional: "grok", "alphavantage", or "" for auto
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
 
 	var stock models.Stock
-	if err := h.db.First(&stock, id).Error; err != nil {
+	if err := h.db.Where("id = ? AND portfolio_id = ?", id, portfolioID).First(&stock).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
 		return
 	}
@@ -591,17 +668,10 @@ func (h *StockHandler) updateStockDataWithSource(stock *models.Stock, source str
 
 	// NO NEED to call CalculateMetrics - Grok already calculated everything!
 
-	// Get FX rate for USD conversion
-	fxRate, err := h.apiService.FetchExchangeRate(stock.Currency)
-	if err != nil {
-		h.logger.Warn().Err(err).Str("currency", stock.Currency).Msg("Failed to fetch FX rate, using default")
-		fxRate = 1.0
+	if err := h.updateStockUSDValues(stock); err != nil {
+		h.logger.Error().Err(err).Str("currency", stock.Currency).Msg("Failed to convert stock values using exchange rates")
+		return err
 	}
-
-	// Calculate USD values
-	stock.CurrentValueUSD = float64(stock.SharesOwned) * stock.CurrentPrice * fxRate
-	costBasis := float64(stock.SharesOwned) * stock.AvgPriceLocal * fxRate
-	stock.UnrealizedPnL = stock.CurrentValueUSD - costBasis
 
 	stock.LastUpdated = time.Now()
 
@@ -650,9 +720,14 @@ func (h *StockHandler) updateStockDataWithSource(stock *models.Stock, source str
 // GetStockHistory returns historical data for a stock
 func (h *StockHandler) GetStockHistory(c *gin.Context) {
 	id := c.Param("id")
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
 
 	var history []models.StockHistory
-	if err := h.db.Where("stock_id = ?", id).Order("recorded_at DESC").Limit(100).Find(&history).Error; err != nil {
+	if err := h.db.Where("stock_id = ? AND portfolio_id = ?", id, portfolioID).Order("recorded_at DESC").Limit(100).Find(&history).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to fetch stock history")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch history"})
 		return
@@ -663,8 +738,14 @@ func (h *StockHandler) GetStockHistory(c *gin.Context) {
 
 // GetDeletedStocks returns all deleted stocks
 func (h *StockHandler) GetDeletedStocks(c *gin.Context) {
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
 	var deletedStocks []models.DeletedStock
-	if err := h.db.Where("restored_at IS NULL").Order("deleted_at DESC").Find(&deletedStocks).Error; err != nil {
+	if err := h.db.Where("restored_at IS NULL AND portfolio_id = ?", portfolioID).Order("deleted_at DESC").Find(&deletedStocks).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to fetch deleted stocks")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch deleted stocks"})
 		return
@@ -676,9 +757,14 @@ func (h *StockHandler) GetDeletedStocks(c *gin.Context) {
 // RestoreStock restores a deleted stock
 func (h *StockHandler) RestoreStock(c *gin.Context) {
 	id := c.Param("id")
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
 
 	var deletedStock models.DeletedStock
-	if err := h.db.First(&deletedStock, id).Error; err != nil {
+	if err := h.db.Where("id = ? AND portfolio_id = ?", id, portfolioID).First(&deletedStock).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Deleted stock not found"})
 		return
 	}
@@ -715,8 +801,14 @@ func (h *StockHandler) RestoreStock(c *gin.Context) {
 
 // ExportJSON exports all stocks to JSON matching the template format
 func (h *StockHandler) ExportJSON(c *gin.Context) {
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
 	var stocks []models.Stock
-	if err := h.db.Find(&stocks).Error; err != nil {
+	if err := h.db.Where("portfolio_id = ?", portfolioID).Find(&stocks).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to fetch stocks")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch stocks"})
 		return
@@ -835,6 +927,12 @@ type BulkStockData struct {
 
 // BulkUpdateStocks handles bulk stock updates from JSON
 func (h *StockHandler) BulkUpdateStocks(c *gin.Context) {
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
 	var req BulkUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.logger.Error().Err(err).Msg("Invalid JSON request")
@@ -848,7 +946,7 @@ func (h *StockHandler) BulkUpdateStocks(c *gin.Context) {
 
 	for _, stockData := range req.Stocks {
 		var existing models.Stock
-		err := h.db.Where("ticker = ?", stockData.Ticker).First(&existing).Error
+		err := h.db.Where("ticker = ? AND portfolio_id = ?", stockData.Ticker, portfolioID).First(&existing).Error
 
 		if err == gorm.ErrRecordNotFound {
 			// Create new stock
@@ -883,6 +981,7 @@ func (h *StockHandler) BulkUpdateStocks(c *gin.Context) {
 				FairValueSource:     stockData.FairValueSource,
 				Comment:             stockData.Comment,
 				LastUpdated:         time.Now(),
+				PortfolioID:         portfolioID,
 			}
 
 			// Set default currency if not provided
@@ -895,11 +994,10 @@ func (h *StockHandler) BulkUpdateStocks(c *gin.Context) {
 				stock.UpdateFrequency = "daily"
 			}
 
-			// Calculate additional fields if possible
 			if stock.SharesOwned > 0 && stock.CurrentPrice > 0 {
-				stock.CurrentValueUSD = float64(stock.SharesOwned) * stock.CurrentPrice
-				if stock.AvgPriceLocal > 0 {
-					stock.UnrealizedPnL = stock.CurrentValueUSD - (float64(stock.SharesOwned) * stock.AvgPriceLocal)
+				if err := h.updateStockUSDValues(&stock); err != nil {
+					errors = append(errors, "Failed to convert "+stockData.Ticker+" values: "+err.Error())
+					continue
 				}
 			}
 
@@ -993,11 +1091,10 @@ func (h *StockHandler) BulkUpdateStocks(c *gin.Context) {
 				existing.Comment = stockData.Comment
 			}
 
-			// Recalculate value fields
 			if existing.SharesOwned > 0 && existing.CurrentPrice > 0 {
-				existing.CurrentValueUSD = float64(existing.SharesOwned) * existing.CurrentPrice
-				if existing.AvgPriceLocal > 0 {
-					existing.UnrealizedPnL = existing.CurrentValueUSD - (float64(existing.SharesOwned) * existing.AvgPriceLocal)
+				if err := h.updateStockUSDValues(&existing); err != nil {
+					errors = append(errors, "Failed to convert "+stockData.Ticker+" values: "+err.Error())
+					continue
 				}
 			}
 
@@ -1036,6 +1133,12 @@ func (h *StockHandler) BulkUpdateStocks(c *gin.Context) {
 // GetStocksBatch returns multiple stocks by IDs in a single request
 // Query params: ids=1,2,3,4 or ids[]=1&ids[]=2&ids[]=3
 func (h *StockHandler) GetStocksBatch(c *gin.Context) {
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
 	// Get IDs from query params
 	idsParam := c.Query("ids")
 	if idsParam == "" {
@@ -1047,7 +1150,7 @@ func (h *StockHandler) GetStocksBatch(c *gin.Context) {
 		}
 
 		var stocks []models.Stock
-		if err := h.db.Where("id IN ?", idsArray).Find(&stocks).Error; err != nil {
+		if err := h.db.Where("id IN ? AND portfolio_id = ?", idsArray, portfolioID).Find(&stocks).Error; err != nil {
 			h.logger.Error().Err(err).Msg("Failed to fetch stocks")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch stocks"})
 			return
@@ -1075,7 +1178,7 @@ func (h *StockHandler) GetStocksBatch(c *gin.Context) {
 	}
 
 	var stocks []models.Stock
-	if err := h.db.Where("id IN ?", ids).Find(&stocks).Error; err != nil {
+	if err := h.db.Where("id IN ? AND portfolio_id = ?", ids, portfolioID).Find(&stocks).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to fetch stocks")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch stocks"})
 		return

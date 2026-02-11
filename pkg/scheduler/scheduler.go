@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/art-pro/stock-backend/pkg/config"
@@ -16,23 +17,24 @@ import (
 func InitScheduler(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) {
 	s := gocron.NewScheduler(time.UTC)
 	apiService := services.NewExternalAPIService(cfg)
+	exchangeRateService := services.NewExchangeRateService(db, logger)
 
 	// Daily update job
 	s.Every(1).Day().At("00:00").Do(func() {
 		logger.Info().Msg("Running daily stock update")
-		updateStocksWithFrequency(db, apiService, logger, "daily")
+		updateStocksWithFrequency(db, apiService, exchangeRateService, logger, "daily")
 	})
 
 	// Weekly update job (Mondays)
 	s.Every(1).Monday().At("00:00").Do(func() {
 		logger.Info().Msg("Running weekly stock update")
-		updateStocksWithFrequency(db, apiService, logger, "weekly")
+		updateStocksWithFrequency(db, apiService, exchangeRateService, logger, "weekly")
 	})
 
 	// Monthly update job (1st of month)
 	s.Every(1).Month(1).At("00:00").Do(func() {
 		logger.Info().Msg("Running monthly stock update")
-		updateStocksWithFrequency(db, apiService, logger, "monthly")
+		updateStocksWithFrequency(db, apiService, exchangeRateService, logger, "monthly")
 	})
 
 	// Alert check job (every hour)
@@ -45,7 +47,7 @@ func InitScheduler(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) {
 }
 
 // updateStocksWithFrequency updates all stocks with the specified frequency
-func updateStocksWithFrequency(db *gorm.DB, apiService *services.ExternalAPIService, logger zerolog.Logger, frequency string) {
+func updateStocksWithFrequency(db *gorm.DB, apiService *services.ExternalAPIService, exchangeRateService *services.ExchangeRateService, logger zerolog.Logger, frequency string) {
 	// Skip if frequency is "manually" - these stocks are only updated by user action
 	if frequency == "manually" {
 		return
@@ -60,7 +62,7 @@ func updateStocksWithFrequency(db *gorm.DB, apiService *services.ExternalAPIServ
 	logger.Info().Int("count", len(stocks)).Str("frequency", frequency).Msg("Updating stocks")
 
 	for i := range stocks {
-		if err := updateStock(db, apiService, &stocks[i], logger); err != nil {
+		if err := updateStock(db, apiService, exchangeRateService, &stocks[i], logger); err != nil {
 			logger.Warn().Err(err).Str("ticker", stocks[i].Ticker).Msg("Failed to update stock")
 		} else {
 			logger.Debug().Str("ticker", stocks[i].Ticker).Msg("Stock updated successfully")
@@ -72,7 +74,7 @@ func updateStocksWithFrequency(db *gorm.DB, apiService *services.ExternalAPIServ
 }
 
 // updateStock updates a single stock's data
-func updateStock(db *gorm.DB, apiService *services.ExternalAPIService, stock *models.Stock, logger zerolog.Logger) error {
+func updateStock(db *gorm.DB, apiService *services.ExternalAPIService, exchangeRateService *services.ExchangeRateService, stock *models.Stock, logger zerolog.Logger) error {
 	oldEV := stock.ExpectedValue
 
 	// Fetch current price
@@ -90,16 +92,23 @@ func updateStock(db *gorm.DB, apiService *services.ExternalAPIService, stock *mo
 	// Calculate derived metrics
 	services.CalculateMetrics(stock)
 
-	// Get FX rate for USD conversion
-	fxRate, err := apiService.FetchExchangeRate(stock.Currency)
+	amountLocal := float64(stock.SharesOwned) * stock.CurrentPrice
+	costLocal := float64(stock.SharesOwned) * stock.AvgPriceLocal
+	valueEUR, err := exchangeRateService.ConvertToEUR(amountLocal, stock.Currency)
 	if err != nil {
-		fxRate = 1.0
+		return err
+	}
+	costEUR, err := exchangeRateService.ConvertToEUR(costLocal, stock.Currency)
+	if err != nil {
+		return err
+	}
+	usdRate, err := exchangeRateService.GetRate("USD")
+	if err != nil || usdRate <= 0 {
+		return fmt.Errorf("invalid USD exchange rate for scheduler calculations")
 	}
 
-	// Calculate USD values
-	stock.CurrentValueUSD = float64(stock.SharesOwned) * stock.CurrentPrice * fxRate
-	costBasis := float64(stock.SharesOwned) * stock.AvgPriceLocal * fxRate
-	stock.UnrealizedPnL = stock.CurrentValueUSD - costBasis
+	stock.CurrentValueUSD = valueEUR * usdRate
+	stock.UnrealizedPnL = (valueEUR - costEUR) * usdRate
 
 	stock.LastUpdated = time.Now()
 
@@ -202,5 +211,5 @@ func checkAndSendAlerts(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) 
 }
 
 func formatFloat(f float64) string {
-	return string(rune(int(f*100))) + "." + string(rune(int(f*100)%100))
+	return fmt.Sprintf("%.2f", f)
 }

@@ -724,11 +724,9 @@ func (s *ExternalAPIService) FetchAllExchangeRates(currencies []string) (map[str
 		}
 		rate, err := s.FetchExchangeRate(currency)
 		if err != nil {
-			// Use fallback rate on error
-			rates[currency] = 1.0
-		} else {
-			rates[currency] = rate
+			return nil, fmt.Errorf("failed to fetch exchange rate for %s: %w", currency, err)
 		}
+		rates[currency] = rate
 	}
 
 	return rates, nil

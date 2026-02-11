@@ -113,8 +113,8 @@ func CalculatePortfolioMetrics(stocks []models.Stock, fxRates map[string]float64
 		}
 
 		fxRate := fxRates[stock.Currency]
-		if fxRate == 0 {
-			fxRate = 1.0 // Default to EUR base if no rate is available.
+		if fxRate <= 0 {
+			continue
 		}
 
 		valueEUR := float64(stock.SharesOwned) * stock.CurrentPrice / fxRate

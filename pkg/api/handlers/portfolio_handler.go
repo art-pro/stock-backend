@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/art-pro/stock-backend/pkg/config"
@@ -22,6 +23,17 @@ type PortfolioHandler struct {
 	exchangeRateService *services.ExchangeRateService
 }
 
+func (h *PortfolioHandler) resolvePortfolioID(c *gin.Context) (uint, error) {
+	if portfolioIDParam := c.Query("portfolio_id"); portfolioIDParam != "" {
+		parsed, err := strconv.ParseUint(portfolioIDParam, 10, 32)
+		if err != nil {
+			return 0, err
+		}
+		return uint(parsed), nil
+	}
+	return database.GetDefaultPortfolioID(h.db)
+}
+
 // NewPortfolioHandler creates a new portfolio handler
 func NewPortfolioHandler(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *PortfolioHandler {
 	return &PortfolioHandler{
@@ -35,8 +47,14 @@ func NewPortfolioHandler(db *gorm.DB, cfg *config.Config, logger zerolog.Logger)
 
 // GetPortfolioSummary returns aggregated portfolio metrics
 func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
 	var stocks []models.Stock
-	if err := h.db.Find(&stocks).Error; err != nil {
+	if err := h.db.Where("portfolio_id = ?", portfolioID).Find(&stocks).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to fetch stocks")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch stocks"})
 		return
@@ -59,30 +77,50 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 	}
 
 	usdRate := fxRates["USD"]
-	if usdRate == 0 {
-		usdRate = 1.0
+	if usdRate <= 0 {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "USD exchange rate is unavailable"})
+		return
 	}
 
 	// Calculate portfolio metrics
 	metrics := services.CalculatePortfolioMetrics(stocks, fxRates)
 
 	// Update weights for each stock
+	tx := h.db.Begin()
+	if tx.Error != nil {
+		h.logger.Error().Err(tx.Error).Msg("Failed to start transaction for portfolio summary updates")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update portfolio summary"})
+		return
+	}
+
 	for i := range stocks {
 		if stocks[i].SharesOwned <= 0 {
 			continue
 		}
 
 		fxRate := fxRates[stocks[i].Currency]
-		if fxRate == 0 {
-			fxRate = 1.0
+		if fxRate <= 0 {
+			h.logger.Warn().Str("ticker", stocks[i].Ticker).Str("currency", stocks[i].Currency).Msg("Missing exchange rate for stock currency, skipping weight/value update")
+			continue
 		}
 		// Convert to EUR (base currency)
 		valueEUR := float64(stocks[i].SharesOwned) * stocks[i].CurrentPrice / fxRate
 		if metrics.TotalValue > 0 {
 			stocks[i].Weight = (valueEUR / metrics.TotalValue) * 100
 			stocks[i].CurrentValueUSD = valueEUR * usdRate // Store in USD for backward compatibility
-			h.db.Save(&stocks[i])
+			if err := tx.Save(&stocks[i]).Error; err != nil {
+				tx.Rollback()
+				h.logger.Error().Err(err).Msg("Failed to persist stock summary values")
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update portfolio summary"})
+				return
+			}
 		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		h.logger.Error().Err(err).Msg("Failed to commit portfolio summary transaction")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update portfolio summary"})
+		return
 	}
 
 	// Add caching headers - cache for 30 seconds
@@ -91,6 +129,15 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"summary": metrics,
 		"stocks":  stocks,
+		"units": gin.H{
+			"summary_total_value":   "EUR",
+			"summary_ev":            "percent",
+			"summary_volatility":    "percent",
+			"stock_current_value":   "USD",
+			"stock_weight":          "percent",
+			"exchange_rate_base":    "EUR",
+			"exchange_rate_semantic": "currency_per_1_EUR",
+		},
 	})
 }
 
@@ -219,8 +266,14 @@ func (h *PortfolioHandler) UpdateSettings(c *gin.Context) {
 
 // GetAlerts returns all alerts
 func (h *PortfolioHandler) GetAlerts(c *gin.Context) {
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
 	var alerts []models.Alert
-	if err := h.db.Order("created_at DESC").Limit(100).Find(&alerts).Error; err != nil {
+	if err := h.db.Where("portfolio_id = ?", portfolioID).Order("created_at DESC").Limit(100).Find(&alerts).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to fetch alerts")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch alerts"})
 		return
@@ -232,8 +285,13 @@ func (h *PortfolioHandler) GetAlerts(c *gin.Context) {
 // DeleteAlert deletes an alert
 func (h *PortfolioHandler) DeleteAlert(c *gin.Context) {
 	id := c.Param("id")
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
 
-	if err := h.db.Delete(&models.Alert{}, id).Error; err != nil {
+	if err := h.db.Where("id = ? AND portfolio_id = ?", id, portfolioID).Delete(&models.Alert{}).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to delete alert")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete alert"})
 		return
