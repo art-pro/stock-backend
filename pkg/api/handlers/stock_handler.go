@@ -454,6 +454,14 @@ func (h *StockHandler) UpdateStockField(c *gin.Context) {
 			stock.ISIN = strVal
 			fieldUpdated = true
 		}
+	case "fair_value_source":
+		if req.StringValue != "" {
+			stock.FairValueSource = req.StringValue
+			fieldUpdated = true
+		} else if strVal, ok := req.Value.(string); ok {
+			stock.FairValueSource = strVal
+			fieldUpdated = true
+		}
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid field name"})
 		return
@@ -467,7 +475,7 @@ func (h *StockHandler) UpdateStockField(c *gin.Context) {
 	stock.LastUpdated = time.Now()
 
 	// Recalculate all derived metrics (only if numeric fields changed)
-	if req.Field != "comment" && req.Field != "company_name" && req.Field != "sector" && req.Field != "update_frequency" && req.Field != "isin" {
+	if req.Field != "comment" && req.Field != "company_name" && req.Field != "sector" && req.Field != "update_frequency" && req.Field != "isin" && req.Field != "fair_value_source" {
 		services.CalculateMetrics(&stock)
 
 		if err := h.updateStockUSDValues(&stock); err != nil {
