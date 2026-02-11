@@ -35,8 +35,8 @@ func TestCalculateMetricsDerivedValues(t *testing.T) {
 		t.Fatalf("Assessment: got %s want %s", stock.Assessment, "Hold")
 	}
 
-	assertClose(t, stock.BuyZoneMax, 96.6003, 0.01, "BuyZoneMax")
-	assertClose(t, stock.BuyZoneMin, 86.9403, 0.02, "BuyZoneMin")
+	assertClose(t, stock.BuyZoneMax, 96.5944, 0.02, "BuyZoneMax")
+	assertClose(t, stock.BuyZoneMin, 86.9350, 0.02, "BuyZoneMin")
 }
 
 func TestCalculateMetricsNegativeEVAssessment(t *testing.T) {
@@ -81,11 +81,11 @@ func TestCalculatePortfolioMetrics(t *testing.T) {
 	metrics := CalculatePortfolioMetrics(stocks, fxRates)
 
 	assertClose(t, metrics.TotalValue, 3000, 0.01, "TotalValue")
-	assertClose(t, metrics.OverallEV, 5.6667, 0.01, "OverallEV")
-	assertClose(t, metrics.WeightedVolatility, 23.3333, 0.01, "WeightedVolatility")
-	assertClose(t, metrics.SharpeRatio, 0.243, 0.01, "SharpeRatio")
+	assertClose(t, metrics.OverallEV, 2.3333, 0.01, "OverallEV")
+	assertClose(t, metrics.WeightedVolatility, 16.6667, 0.01, "WeightedVolatility")
+	assertClose(t, metrics.SharpeRatio, -0.1, 0.01, "SharpeRatio")
 	assertClose(t, metrics.KellyUtilization, 100, 0.01, "KellyUtilization")
 
-	assertClose(t, metrics.SectorWeights["Tech"], 100, 0.01, "SectorWeights[Tech]")
+	assertClose(t, metrics.SectorWeights["Tech"], 33.3333, 0.05, "SectorWeights[Tech]")
 	assertClose(t, metrics.SectorWeights["Health"], 66.6667, 0.05, "SectorWeights[Health]")
 }

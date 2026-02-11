@@ -6,101 +6,94 @@ import (
 	"github.com/art-pro/stock-backend/pkg/models"
 )
 
+const (
+	defaultProbabilityPositive = 0.65
+	riskFreeRatePercent        = 4.0
+	minDownsideMagnitude       = 0.1
+)
+
+func calibrateDownsideRisk(beta float64) float64 {
+	if beta < 0.5 {
+		return -15.0
+	}
+	if beta < 1.0 {
+		return -20.0
+	}
+	if beta < 1.5 {
+		return -25.0
+	}
+	return -30.0
+}
+
 // CalculateMetrics calculates all derived metrics for a stock
 // These formulas implement the investment strategy's Kelly criterion and EV approach
 func CalculateMetrics(stock *models.Stock) {
-	// 1. Calibrate Downside Risk based on Beta (if not manually set)
-	// Beta < 0.5: -15%, Beta 0.5-1: -20%, Beta 1-1.5: -25%, Beta > 1.5: -30%
-	if stock.DownsideRisk == 0 && stock.Beta > 0 {
-		if stock.Beta < 0.5 {
-			stock.DownsideRisk = -15.0
-		} else if stock.Beta < 1.0 {
-			stock.DownsideRisk = -20.0
-		} else if stock.Beta < 1.5 {
-			stock.DownsideRisk = -25.0
+	// 1. Calibrate downside risk based on beta, unless explicitly provided.
+	if stock.DownsideRisk == 0 {
+		if stock.Beta > 0 {
+			stock.DownsideRisk = calibrateDownsideRisk(stock.Beta)
 		} else {
-			stock.DownsideRisk = -30.0
+			stock.DownsideRisk = -20.0
 		}
 	}
 
-	// 2. Calculate Upside Potential (%)
-	// Formula: ((Fair Value - Current Price) / Current Price) * 100
+	// 2. Upside Potential = ((Fair Value - Current Price) / Current Price) * 100
 	if stock.CurrentPrice > 0 && stock.FairValue > 0 {
 		stock.UpsidePotential = ((stock.FairValue - stock.CurrentPrice) / stock.CurrentPrice) * 100
 	}
 
-	// 3. Set default probability if not set (0.65 for typical "Buy" rating)
-	if stock.ProbabilityPositive == 0 {
-		stock.ProbabilityPositive = 0.65
+	// 3. Use conservative default probability when missing/invalid.
+	if stock.ProbabilityPositive <= 0 || stock.ProbabilityPositive > 1 {
+		stock.ProbabilityPositive = defaultProbabilityPositive
 	}
 
-	// 4. Calculate b ratio (Upside/Downside ratio)
-	// Formula: Upside % / |Downside %|
-	if stock.DownsideRisk != 0 {
-		stock.BRatio = stock.UpsidePotential / math.Abs(stock.DownsideRisk)
+	// 4. b Ratio = Upside % / |Downside %| with a small floor on downside.
+	downsideMagnitude := math.Abs(stock.DownsideRisk)
+	if downsideMagnitude < minDownsideMagnitude {
+		downsideMagnitude = minDownsideMagnitude
 	}
+	stock.BRatio = stock.UpsidePotential / downsideMagnitude
 
-	// 5. Calculate Expected Value (EV) (%)
-	// Formula: (p * Upside %) + ((1 - p) * Downside %)
-	// This is the probabilistic edge - the core decision metric
+	// 5. Expected Value (EV) = (p * Upside %) + ((1 - p) * Downside %)
 	stock.ExpectedValue = (stock.ProbabilityPositive * stock.UpsidePotential) +
 		((1 - stock.ProbabilityPositive) * stock.DownsideRisk)
 
-	// 6. Calculate Kelly Fraction (f*)
-	// Formula: [(b * p) - q] / b where q = 1 - p
-	// This is the optimal betting fraction according to Kelly criterion
+	// 6. Kelly f* = ((b * p) - (1 - p)) / b, expressed in percent and clamped at 0.
 	if stock.BRatio > 0 {
-		q := 1 - stock.ProbabilityPositive
-		stock.KellyFraction = ((stock.BRatio * stock.ProbabilityPositive) - q) / stock.BRatio
-		stock.KellyFraction = stock.KellyFraction * 100 // Convert to percentage
-
-		// If f* is negative, set to 0% (no position)
+		stock.KellyFraction = ((stock.BRatio*stock.ProbabilityPositive)-(1-stock.ProbabilityPositive))/stock.BRatio * 100
 		if stock.KellyFraction < 0 {
 			stock.KellyFraction = 0
 		}
+	} else {
+		stock.KellyFraction = 0
 	}
 
-	// 7. Calculate Half-Kelly Suggested Weight (%)
-	// Formula: f* / 2, capped at 15%
-	// Using half-Kelly for more conservative sizing
+	// 7. Half-Kelly suggested weight, capped at 15%.
 	stock.HalfKellySuggested = stock.KellyFraction / 2
 	if stock.HalfKellySuggested > 15 {
-		stock.HalfKellySuggested = 15 // Cap at 15% max position size
+		stock.HalfKellySuggested = 15
 	}
 
-	// 8. Determine Assessment based on EV
-	// Strategy rules: EV > 7% = Add, EV > 0% = Hold, EV < -3% = Sell, else Trim
+	// 8. Assessment thresholds under a conservative EV policy.
 	if stock.ExpectedValue > 7 {
 		stock.Assessment = "Add"
-	} else if stock.ExpectedValue > 0 {
+	} else if stock.ExpectedValue >= 3 && stock.ExpectedValue <= 7 {
 		stock.Assessment = "Hold"
-	} else if stock.ExpectedValue > -3 {
+	} else if stock.ExpectedValue >= 0 && stock.ExpectedValue < 3 {
 		stock.Assessment = "Trim"
 	} else {
 		stock.Assessment = "Sell"
 	}
 
-	// Calculate Buy Zone (approximate range where EV > 7%)
-	// This is a simplified calculation - could be refined with more complex modeling
+	// 9. Buy zone uses EV >= 7% entry threshold.
 	if stock.FairValue > 0 && stock.ProbabilityPositive > 0 {
-		// Find price where EV would be ~15% (attractive entry)
-		// Working backwards from EV formula: EV = p * ((FV - P)/P * 100) + (1-p) * downside
-		// For attractive entry, we want EV >= 15%
-		targetEV := 15.0
-
-		// Calculate the price where upside potential gives us target EV
-		// Assuming downside risk stays proportional to current estimate
-		// targetEV = p * upside + (1-p) * downside
-		// Solve for upside: upside = (targetEV - (1-p)*downside) / p
+		targetEV := 7.0
 		requiredUpside := (targetEV - (1-stock.ProbabilityPositive)*stock.DownsideRisk) / stock.ProbabilityPositive
 
-		// upside = ((FV - P) / P) * 100, solve for P
-		// P = FV / (1 + upside/100)
-		if requiredUpside > 0 {
+		if requiredUpside > -100 {
 			stock.BuyZoneMax = stock.FairValue / (1 + requiredUpside/100)
 			stock.BuyZoneMin = stock.BuyZoneMax * 0.90 // 10% range below max
 		} else {
-			// Fallback to simple percentage if calculation doesn't work
 			stock.BuyZoneMin = stock.CurrentPrice * 0.85
 			stock.BuyZoneMax = stock.CurrentPrice * 0.95
 		}
@@ -125,7 +118,7 @@ func CalculatePortfolioMetrics(stocks []models.Stock, fxRates map[string]float64
 			fxRate = 1.0 // Default to 1 if no rate available (assume USD)
 		}
 
-		valueUSD := float64(stock.SharesOwned) * stock.CurrentPrice / fxRate
+		valueUSD := float64(stock.SharesOwned) * stock.CurrentPrice * fxRate
 		stockValues[i] = valueUSD
 		totalValue += valueUSD
 	}
@@ -155,10 +148,10 @@ func CalculatePortfolioMetrics(stocks []models.Stock, fxRates map[string]float64
 		}
 	}
 
-	// Calculate Sharpe Ratio (simplified: EV / Volatility)
+	// Sharpe Ratio = (Rp - Rf) / sigma, using weighted EV as Rp proxy.
 	sharpeRatio := 0.0
 	if weightedVolatility > 0 {
-		sharpeRatio = weightedEV / weightedVolatility
+		sharpeRatio = (weightedEV - riskFreeRatePercent) / weightedVolatility
 	}
 
 	return PortfolioMetrics{
