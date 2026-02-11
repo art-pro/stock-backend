@@ -49,3 +49,6 @@ Thumbs.db
 
 # Vercel
 .vercel
+
+# local AI/context docs
+stock-frontend/CLAUDE.md
