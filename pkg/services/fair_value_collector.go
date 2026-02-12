@@ -2,12 +2,14 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,17 +43,17 @@ func NewFairValueCollector(cfg *config.Config) *FairValueCollector {
 	return &FairValueCollector{
 		cfg: cfg,
 		client: &http.Client{
-			Timeout: 40 * time.Second,
+			Timeout: 120 * time.Second,
 		},
 	}
 }
 
-func (c *FairValueCollector) CollectTrustedFairValues(stock *models.Stock) ([]NormalizedFairValueEntry, error) {
+func (c *FairValueCollector) CollectTrustedFairValues(ctx context.Context, stock *models.Stock) ([]NormalizedFairValueEntry, error) {
 	var all []FairValueSourceEntry
 	var errs []string
 
 	if c.cfg.XAIAPIKey != "" {
-		entries, err := c.collectFromGrok(stock)
+		entries, err := c.collectFromGrok(ctx, stock)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("grok: %v", err))
 		} else {
@@ -67,7 +69,7 @@ func (c *FairValueCollector) CollectTrustedFairValues(stock *models.Stock) ([]No
 	}
 
 	if c.cfg.DeepseekAPIKey != "" {
-		entries, err := c.collectFromDeepseek(stock)
+		entries, err := c.collectFromDeepseek(ctx, stock)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("deepseek: %v", err))
 		} else {
@@ -111,7 +113,7 @@ func (c *FairValueCollector) CollectTrustedFairValues(stock *models.Stock) ([]No
 	return valid, nil
 }
 
-func (c *FairValueCollector) collectFromGrok(stock *models.Stock) ([]FairValueSourceEntry, error) {
+func (c *FairValueCollector) collectFromGrok(ctx context.Context, stock *models.Stock) ([]FairValueSourceEntry, error) {
 	prompt := buildFairValuePrompt(stock)
 	reqBody := map[string]interface{}{
 		"model": "grok-4-fast-reasoning",
@@ -127,10 +129,10 @@ func (c *FairValueCollector) collectFromGrok(stock *models.Stock) ([]FairValueSo
 		},
 		"stream": false,
 	}
-	return c.callLLM("https://api.x.ai/v1/chat/completions", c.cfg.XAIAPIKey, reqBody)
+	return c.callLLM(ctx, "https://api.x.ai/v1/chat/completions", c.cfg.XAIAPIKey, reqBody)
 }
 
-func (c *FairValueCollector) collectFromDeepseek(stock *models.Stock) ([]FairValueSourceEntry, error) {
+func (c *FairValueCollector) collectFromDeepseek(ctx context.Context, stock *models.Stock) ([]FairValueSourceEntry, error) {
 	prompt := buildFairValuePrompt(stock)
 	reqBody := map[string]interface{}{
 		"model": "deepseek-reasoner",
@@ -146,16 +148,16 @@ func (c *FairValueCollector) collectFromDeepseek(stock *models.Stock) ([]FairVal
 		},
 		"stream": false,
 	}
-	return c.callLLM("https://api.deepseek.com/v1/chat/completions", c.cfg.DeepseekAPIKey, reqBody)
+	return c.callLLM(ctx, "https://api.deepseek.com/v1/chat/completions", c.cfg.DeepseekAPIKey, reqBody)
 }
 
-func (c *FairValueCollector) callLLM(endpoint, apiKey string, body map[string]interface{}) ([]FairValueSourceEntry, error) {
+func (c *FairValueCollector) callLLM(ctx context.Context, endpoint, apiKey string, body map[string]interface{}) ([]FairValueSourceEntry, error) {
 	jsonData, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -198,14 +200,12 @@ func (c *FairValueCollector) callLLM(endpoint, apiKey string, body map[string]in
 		return nil, fmt.Errorf("missing content")
 	}
 
-	content = extractJSONContent(content)
-
-	var fvResp fairValueLLMResponse
-	if err := json.Unmarshal([]byte(content), &fvResp); err != nil {
+	entries, err := parseFairValueEntries(content)
+	if err != nil {
 		return nil, fmt.Errorf("parse fair value JSON: %w", err)
 	}
 
-	return fvResp.Entries, nil
+	return entries, nil
 }
 
 func extractJSONContent(content string) string {
@@ -216,6 +216,196 @@ func extractJSONContent(content string) string {
 		trimmed = strings.TrimSuffix(trimmed, "```")
 	}
 	return strings.TrimSpace(trimmed)
+}
+
+func parseFairValueEntries(content string) ([]FairValueSourceEntry, error) {
+	trimmed := extractJSONContent(content)
+	candidates := []string{trimmed}
+
+	if start := strings.Index(trimmed, "{"); start >= 0 {
+		if end := strings.LastIndex(trimmed, "}"); end > start {
+			candidates = append(candidates, trimmed[start:end+1])
+		}
+	}
+	if start := strings.Index(trimmed, "["); start >= 0 {
+		if end := strings.LastIndex(trimmed, "]"); end > start {
+			candidates = append(candidates, trimmed[start:end+1])
+		}
+	}
+
+	for _, candidate := range candidates {
+		if entries, ok := parseEntriesFromJSONCandidate(candidate); ok && len(entries) > 0 {
+			return entries, nil
+		}
+	}
+
+	if entries := parseEntriesFromPipeText(trimmed); len(entries) > 0 {
+		return entries, nil
+	}
+
+	return nil, fmt.Errorf("could not parse entries from provider content")
+}
+
+func parseEntriesFromJSONCandidate(candidate string) ([]FairValueSourceEntry, bool) {
+	var wrapped fairValueLLMResponse
+	if err := json.Unmarshal([]byte(candidate), &wrapped); err == nil && len(wrapped.Entries) > 0 {
+		return wrapped.Entries, true
+	}
+
+	var direct []FairValueSourceEntry
+	if err := json.Unmarshal([]byte(candidate), &direct); err == nil && len(direct) > 0 {
+		return direct, true
+	}
+
+	var obj map[string]interface{}
+	if err := json.Unmarshal([]byte(candidate), &obj); err == nil {
+		for _, key := range []string{"entries", "data", "results", "sources", "targets"} {
+			raw, exists := obj[key]
+			if !exists {
+				continue
+			}
+			items, ok := raw.([]interface{})
+			if !ok {
+				continue
+			}
+			entries := make([]FairValueSourceEntry, 0, len(items))
+			for _, item := range items {
+				itemMap, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if entry, ok := coerceEntry(itemMap); ok {
+					entries = append(entries, entry)
+				}
+			}
+			if len(entries) > 0 {
+				return entries, true
+			}
+		}
+	}
+
+	return nil, false
+}
+
+func coerceEntry(item map[string]interface{}) (FairValueSourceEntry, bool) {
+	readString := func(keys ...string) string {
+		for _, key := range keys {
+			if value, exists := item[key]; exists {
+				if s, ok := value.(string); ok {
+					return strings.TrimSpace(s)
+				}
+			}
+		}
+		return ""
+	}
+
+	readFloat := func(keys ...string) (float64, bool) {
+		for _, key := range keys {
+			value, exists := item[key]
+			if !exists {
+				continue
+			}
+			switch v := value.(type) {
+			case float64:
+				return v, true
+			case int:
+				return float64(v), true
+			case string:
+				cleaned := strings.TrimSpace(strings.ReplaceAll(v, ",", ""))
+				cleaned = strings.TrimPrefix(cleaned, "$")
+				if f, err := strconv.ParseFloat(cleaned, 64); err == nil {
+					return f, true
+				}
+			}
+		}
+		return 0, false
+	}
+
+	fairValue, ok := readFloat("fair_value", "fairValue", "target_price", "targetPrice", "value", "price")
+	if !ok {
+		return FairValueSourceEntry{}, false
+	}
+
+	entry := FairValueSourceEntry{
+		FairValue: fairValue,
+		Source:    readString("source", "provider", "name"),
+		SourceURL: readString("source_url", "sourceUrl", "url", "link"),
+		AsOf:      readString("as_of", "asOf", "date", "updated_at", "published_at"),
+	}
+	return entry, true
+}
+
+func parseEntriesFromPipeText(content string) []FairValueSourceEntry {
+	lines := strings.Split(content, "\n")
+	datePattern := regexp.MustCompile(`\d{4}-\d{2}-\d{2}`)
+	numberPattern := regexp.MustCompile(`[-+]?\d+(?:,\d{3})*(?:\.\d+)?`)
+
+	entries := make([]FairValueSourceEntry, 0)
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || !strings.Contains(line, "|") {
+			continue
+		}
+		if strings.Contains(line, "---") {
+			continue
+		}
+
+		partsRaw := strings.Split(line, "|")
+		parts := make([]string, 0, len(partsRaw))
+		for _, p := range partsRaw {
+			t := strings.TrimSpace(p)
+			if t != "" {
+				parts = append(parts, t)
+			}
+		}
+		if len(parts) < 3 {
+			continue
+		}
+
+		source := ""
+		sourceURL := ""
+		asOf := ""
+		fairValue := 0.0
+		hasFairValue := false
+
+		for _, part := range parts {
+			lower := strings.ToLower(part)
+			if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.Contains(lower, ".com/") {
+				if sourceURL == "" {
+					sourceURL = part
+				}
+				continue
+			}
+			if asOf == "" {
+				if d := datePattern.FindString(part); d != "" {
+					asOf = d
+				}
+			}
+			if !hasFairValue {
+				if n := numberPattern.FindString(strings.ReplaceAll(part, "$", "")); n != "" {
+					n = strings.ReplaceAll(n, ",", "")
+					if f, err := strconv.ParseFloat(n, 64); err == nil && f > 0 {
+						fairValue = f
+						hasFairValue = true
+					}
+				}
+			}
+			if source == "" && !strings.Contains(lower, "fair") && !strings.Contains(lower, "value") && !strings.Contains(lower, "date") {
+				source = part
+			}
+		}
+
+		if hasFairValue {
+			entries = append(entries, FairValueSourceEntry{
+				FairValue: fairValue,
+				Source:    source,
+				SourceURL: sourceURL,
+				AsOf:      asOf,
+			})
+		}
+	}
+
+	return entries
 }
 
 func buildFairValuePrompt(stock *models.Stock) string {

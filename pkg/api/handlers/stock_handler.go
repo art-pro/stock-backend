@@ -636,8 +636,15 @@ func (h *StockHandler) CollectFairValues(c *gin.Context) {
 	totalSources := 0
 
 	for i := range stocks {
+		select {
+		case <-c.Request.Context().Done():
+			c.JSON(499, gin.H{"error": "Request cancelled by client"})
+			return
+		default:
+		}
+
 		stock := &stocks[i]
-		entries, collectErr := h.fairValueCollector.CollectTrustedFairValues(stock)
+		entries, collectErr := h.fairValueCollector.CollectTrustedFairValues(c.Request.Context(), stock)
 		if collectErr != nil {
 			errors = append(errors, fmt.Sprintf("%s: %v", stock.Ticker, collectErr))
 			continue
