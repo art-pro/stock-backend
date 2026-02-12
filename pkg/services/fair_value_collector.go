@@ -78,10 +78,12 @@ func (c *FairValueCollector) CollectTrustedFairValues(stock *models.Stock) ([]No
 	valid := make([]NormalizedFairValueEntry, 0, len(all))
 	seen := map[string]struct{}{}
 	now := time.Now()
+	rejected := 0
 
 	for _, entry := range all {
 		normalized, ok := validateAndNormalizeEntry(entry, now)
 		if !ok {
+			rejected++
 			continue
 		}
 		dupeKey := fmt.Sprintf("%.6f|%s|%s", normalized.FairValue, normalized.Source, normalized.RecordedAt.Format("2006-01-02"))
@@ -92,8 +94,12 @@ func (c *FairValueCollector) CollectTrustedFairValues(stock *models.Stock) ([]No
 		valid = append(valid, normalized)
 	}
 
-	if len(valid) < 2 {
-		return nil, fmt.Errorf("insufficient trusted and recent fair value data (need at least 2 entries)")
+	if len(valid) < 1 {
+		errDetail := fmt.Sprintf("no valid trusted/recent entries (received=%d, rejected=%d)", len(all), rejected)
+		if len(errs) > 0 {
+			errDetail = errDetail + "; provider_errors=" + strings.Join(errs, " | ")
+		}
+		return nil, fmt.Errorf(errDetail)
 	}
 
 	return valid, nil
@@ -218,10 +224,11 @@ Stock:
 STRICT RULES:
 1) Use at least 3 sources.
 2) Only use trustworthy sources such as: Reuters, Bloomberg, MarketScreener, Yahoo Finance, Morningstar, WSJ, MarketWatch.
-3) Each source must have explicit recency. Reject stale data older than 45 days.
+3) Each source must have explicit recency. Reject stale data older than 90 days.
 4) Return fair value/target price in stock currency (%s).
 5) Do not invent URLs or dates.
-6) Return JSON only, no extra text.
+6) Always return full absolute URL (include https://).
+7) Return JSON only, no extra text.
 
 JSON schema:
 {
@@ -252,7 +259,7 @@ func validateAndNormalizeEntry(entry FairValueSourceEntry, now time.Time) (Norma
 		return NormalizedFairValueEntry{}, false
 	}
 	age := now.Sub(asOf)
-	if age < -24*time.Hour || age > 45*24*time.Hour {
+	if age < -24*time.Hour || age > 90*24*time.Hour {
 		return NormalizedFairValueEntry{}, false
 	}
 
@@ -266,9 +273,12 @@ func validateAndNormalizeEntry(entry FairValueSourceEntry, now time.Time) (Norma
 func parseAsOfDate(raw string) (time.Time, bool) {
 	layouts := []string{
 		"2006-01-02",
+		"2006/01/02",
 		time.RFC3339,
 		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
 		"Jan 2, 2006",
+		"02 Jan 2006",
 	}
 	for _, layout := range layouts {
 		if t, err := time.Parse(layout, strings.TrimSpace(raw)); err == nil {
@@ -279,7 +289,14 @@ func parseAsOfDate(raw string) (time.Time, bool) {
 }
 
 func isTrustedSourceURL(rawURL string) bool {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	cleaned := strings.TrimSpace(rawURL)
+	if cleaned == "" {
+		return false
+	}
+	if !strings.HasPrefix(cleaned, "http://") && !strings.HasPrefix(cleaned, "https://") {
+		cleaned = "https://" + cleaned
+	}
+	parsed, err := url.Parse(cleaned)
 	if err != nil || parsed.Host == "" {
 		return false
 	}
@@ -294,6 +311,10 @@ func isTrustedSourceURL(rawURL string) bool {
 		"morningstar.com",
 		"wsj.com",
 		"marketwatch.com",
+		"tipranks.com",
+		"seekingalpha.com",
+		"nasdaq.com",
+		"ft.com",
 	}
 
 	for _, domain := range trustedDomains {
