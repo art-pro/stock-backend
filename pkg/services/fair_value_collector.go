@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -55,7 +55,14 @@ func (c *FairValueCollector) CollectTrustedFairValues(stock *models.Stock) ([]No
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("grok: %v", err))
 		} else {
-			all = append(all, entries...)
+			for _, e := range entries {
+				if strings.TrimSpace(e.Source) == "" {
+					e.Source = "Grok"
+				} else {
+					e.Source = "Grok | " + e.Source
+				}
+				all = append(all, e)
+			}
 		}
 	}
 
@@ -64,7 +71,14 @@ func (c *FairValueCollector) CollectTrustedFairValues(stock *models.Stock) ([]No
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("deepseek: %v", err))
 		} else {
-			all = append(all, entries...)
+			for _, e := range entries {
+				if strings.TrimSpace(e.Source) == "" {
+					e.Source = "Deepseek"
+				} else {
+					e.Source = "Deepseek | " + e.Source
+				}
+				all = append(all, e)
+			}
 		}
 	}
 
@@ -76,26 +90,18 @@ func (c *FairValueCollector) CollectTrustedFairValues(stock *models.Stock) ([]No
 	}
 
 	valid := make([]NormalizedFairValueEntry, 0, len(all))
-	seen := map[string]struct{}{}
-	now := time.Now()
-	rejected := 0
+	now := time.Now().UTC()
 
 	for _, entry := range all {
-		normalized, ok := validateAndNormalizeEntry(entry, now)
+		normalized, ok := normalizeLLMEntry(entry, now)
 		if !ok {
-			rejected++
 			continue
 		}
-		dupeKey := fmt.Sprintf("%.6f|%s|%s", normalized.FairValue, normalized.Source, normalized.RecordedAt.Format("2006-01-02"))
-		if _, exists := seen[dupeKey]; exists {
-			continue
-		}
-		seen[dupeKey] = struct{}{}
 		valid = append(valid, normalized)
 	}
 
 	if len(valid) < 1 {
-		errDetail := fmt.Sprintf("no valid trusted/recent entries (received=%d, rejected=%d)", len(all), rejected)
+		errDetail := fmt.Sprintf("no usable fair value entries (received=%d)", len(all))
 		if len(errs) > 0 {
 			errDetail = errDetail + "; provider_errors=" + strings.Join(errs, " | ")
 		}
@@ -224,7 +230,7 @@ Stock:
 STRICT RULES:
 1) Use at least 3 sources.
 2) Only use trustworthy sources such as: Reuters, Bloomberg, MarketScreener, Yahoo Finance, Morningstar, WSJ, MarketWatch.
-3) Each source must have explicit recency. Reject stale data older than 90 days.
+3) Each source should include explicit recency.
 4) Return fair value/target price in stock currency (%s).
 5) Do not invent URLs or dates.
 6) Always return full absolute URL (include https://).
@@ -243,34 +249,42 @@ JSON schema:
 }`, stock.Ticker, stock.ISIN, stock.CompanyName, stock.Currency, stock.Currency)
 }
 
-func validateAndNormalizeEntry(entry FairValueSourceEntry, now time.Time) (NormalizedFairValueEntry, bool) {
+func normalizeLLMEntry(entry FairValueSourceEntry, now time.Time) (NormalizedFairValueEntry, bool) {
 	if entry.FairValue <= 0 || entry.FairValue > 10000000 {
 		return NormalizedFairValueEntry{}, false
 	}
-	if strings.TrimSpace(entry.Source) == "" || strings.TrimSpace(entry.SourceURL) == "" || strings.TrimSpace(entry.AsOf) == "" {
-		return NormalizedFairValueEntry{}, false
+	source := strings.TrimSpace(entry.Source)
+	if source == "" {
+		source = "Unknown source"
 	}
-	if !isTrustedSourceURL(entry.SourceURL) {
-		return NormalizedFairValueEntry{}, false
+	if strings.TrimSpace(entry.SourceURL) != "" {
+		source = fmt.Sprintf("%s (%s)", source, strings.TrimSpace(entry.SourceURL))
 	}
 
-	asOf, ok := parseAsOfDate(entry.AsOf)
+	recordedAt, ok := parseAsOfDate(entry.AsOf)
 	if !ok {
-		return NormalizedFairValueEntry{}, false
-	}
-	age := now.Sub(asOf)
-	if age < -24*time.Hour || age > 90*24*time.Hour {
-		return NormalizedFairValueEntry{}, false
+		recordedAt = now
 	}
 
 	return NormalizedFairValueEntry{
 		FairValue:  entry.FairValue,
-		Source:     fmt.Sprintf("%s (%s)", strings.TrimSpace(entry.Source), strings.TrimSpace(entry.SourceURL)),
-		RecordedAt: asOf,
+		Source:     source,
+		RecordedAt: recordedAt,
 	}, true
 }
 
 func parseAsOfDate(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+
+	// Extract date part when LLM returns "as of 2026-02-11".
+	re := regexp.MustCompile(`\d{4}-\d{2}-\d{2}`)
+	if match := re.FindString(raw); match != "" {
+		raw = match
+	}
+
 	layouts := []string{
 		"2006-01-02",
 		"2006/01/02",
@@ -281,48 +295,11 @@ func parseAsOfDate(raw string) (time.Time, bool) {
 		"02 Jan 2006",
 	}
 	for _, layout := range layouts {
-		if t, err := time.Parse(layout, strings.TrimSpace(raw)); err == nil {
+		if t, err := time.Parse(layout, raw); err == nil {
 			return t.UTC(), true
 		}
 	}
 	return time.Time{}, false
-}
-
-func isTrustedSourceURL(rawURL string) bool {
-	cleaned := strings.TrimSpace(rawURL)
-	if cleaned == "" {
-		return false
-	}
-	if !strings.HasPrefix(cleaned, "http://") && !strings.HasPrefix(cleaned, "https://") {
-		cleaned = "https://" + cleaned
-	}
-	parsed, err := url.Parse(cleaned)
-	if err != nil || parsed.Host == "" {
-		return false
-	}
-	host := strings.ToLower(parsed.Host)
-	host = strings.TrimPrefix(host, "www.")
-
-	trustedDomains := []string{
-		"reuters.com",
-		"bloomberg.com",
-		"marketscreener.com",
-		"finance.yahoo.com",
-		"morningstar.com",
-		"wsj.com",
-		"marketwatch.com",
-		"tipranks.com",
-		"seekingalpha.com",
-		"nasdaq.com",
-		"ft.com",
-	}
-
-	for _, domain := range trustedDomains {
-		if host == domain || strings.HasSuffix(host, "."+domain) {
-			return true
-		}
-	}
-	return false
 }
 
 func Median(values []float64) float64 {

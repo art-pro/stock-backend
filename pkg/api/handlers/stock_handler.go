@@ -724,11 +724,12 @@ func (h *StockHandler) CollectFairValues(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":              "Fair value collection completed",
-		"updated":              updated,
-		"errors":               len(errors),
-		"error_details":        errors,
+		"message":               "Fair value collection completed",
+		"updated":               updated,
+		"errors":                len(errors),
+		"error_details":         errors,
 		"total_requested":       len(req.IDs),
+		"entries_saved":         totalSources,
 		"trusted_entries_saved": totalSources,
 	})
 }
