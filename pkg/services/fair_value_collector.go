@@ -219,6 +219,10 @@ func extractJSONContent(content string) string {
 }
 
 func buildFairValuePrompt(stock *models.Stock) string {
+	now := time.Now().UTC()
+	currentMonth := now.Format("January")
+	currentYear := now.Format("2006")
+
 	return fmt.Sprintf(`Find fair value targets for this stock from multiple trustworthy and up-to-date sources.
 
 Stock:
@@ -228,9 +232,9 @@ Stock:
 - Currency: %s
 
 STRICT RULES:
-1) Use at least 3 sources.
+1) Use between 10 and 15 sources from the web.
 2) Only use trustworthy sources such as: Reuters, Bloomberg, MarketScreener, Yahoo Finance, Morningstar, WSJ, MarketWatch.
-3) Each source should include explicit recency.
+3) Source date must be from %s %s (current month and year), and each entry must include explicit date.
 4) Return fair value/target price in stock currency (%s).
 5) Do not invent URLs or dates.
 6) Always return full absolute URL (include https://).
@@ -246,7 +250,7 @@ JSON schema:
       "as_of": "YYYY-MM-DD"
     }
   ]
-}`, stock.Ticker, stock.ISIN, stock.CompanyName, stock.Currency, stock.Currency)
+}`, stock.Ticker, stock.ISIN, stock.CompanyName, stock.Currency, currentMonth, currentYear, stock.Currency)
 }
 
 func normalizeLLMEntry(entry FairValueSourceEntry, now time.Time) (NormalizedFairValueEntry, bool) {
@@ -263,7 +267,12 @@ func normalizeLLMEntry(entry FairValueSourceEntry, now time.Time) (NormalizedFai
 
 	recordedAt, ok := parseAsOfDate(entry.AsOf)
 	if !ok {
-		recordedAt = now
+		return NormalizedFairValueEntry{}, false
+	}
+
+	// Strict freshness: source data must be from current month and year.
+	if recordedAt.Year() != now.Year() || recordedAt.Month() != now.Month() {
+		return NormalizedFairValueEntry{}, false
 	}
 
 	return NormalizedFairValueEntry{
