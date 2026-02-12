@@ -100,6 +100,17 @@ type StockHistory struct {
 	RecordedAt          time.Time `gorm:"index" json:"recorded_at"`
 }
 
+// FairValueHistory stores source-level fair value observations for each stock.
+type FairValueHistory struct {
+	ID          uint      `gorm:"primarykey" json:"id"`
+	StockID     uint      `gorm:"not null;index" json:"stock_id"`
+	PortfolioID uint      `gorm:"not null;index" json:"portfolio_id"`
+	Ticker      string    `gorm:"index" json:"ticker"`
+	FairValue   float64   `json:"fair_value"`
+	Source      string    `gorm:"not null" json:"source"`
+	RecordedAt  time.Time `gorm:"index" json:"recorded_at"`
+}
+
 // DeletedStock stores soft-deleted stocks in a log
 type DeletedStock struct {
 	ID          uint       `gorm:"primarykey" json:"id"`

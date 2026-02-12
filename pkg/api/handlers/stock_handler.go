@@ -23,6 +23,7 @@ type StockHandler struct {
 	cfg                 *config.Config
 	logger              zerolog.Logger
 	apiService          *services.ExternalAPIService
+	fairValueCollector  *services.FairValueCollector
 	exchangeRateService *services.ExchangeRateService
 }
 
@@ -33,6 +34,7 @@ func NewStockHandler(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *St
 		cfg:                 cfg,
 		logger:              logger,
 		apiService:          services.NewExternalAPIService(cfg),
+		fairValueCollector:  services.NewFairValueCollector(cfg),
 		exchangeRateService: services.NewExchangeRateService(db, logger),
 	}
 }
@@ -604,6 +606,133 @@ func (h *StockHandler) UpdateAllStocks(c *gin.Context) {
 	})
 }
 
+type CollectFairValuesRequest struct {
+	IDs []uint `json:"ids" binding:"required,min=1"`
+}
+
+// CollectFairValues fetches fair values from trusted sources (via Grok + Deepseek) for selected stocks.
+func (h *StockHandler) CollectFairValues(c *gin.Context) {
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
+	var req CollectFairValuesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+		return
+	}
+
+	var stocks []models.Stock
+	if err := h.db.Where("id IN ? AND portfolio_id = ?", req.IDs, portfolioID).Find(&stocks).Error; err != nil {
+		h.logger.Error().Err(err).Msg("Failed to fetch selected stocks")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch selected stocks"})
+		return
+	}
+
+	updated := 0
+	errors := []string{}
+	totalSources := 0
+
+	for i := range stocks {
+		stock := &stocks[i]
+		entries, collectErr := h.fairValueCollector.CollectTrustedFairValues(stock)
+		if collectErr != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", stock.Ticker, collectErr))
+			continue
+		}
+
+		values := make([]float64, 0, len(entries))
+		for _, entry := range entries {
+			values = append(values, entry.FairValue)
+		}
+		if len(values) == 0 {
+			errors = append(errors, fmt.Sprintf("%s: no trusted fair value entries returned", stock.Ticker))
+			continue
+		}
+
+		txErr := func() error {
+			tx := h.db.Begin()
+			if tx.Error != nil {
+				return fmt.Errorf("failed to start transaction")
+			}
+
+			for _, entry := range entries {
+				history := models.FairValueHistory{
+					StockID:     stock.ID,
+					PortfolioID: stock.PortfolioID,
+					Ticker:      stock.Ticker,
+					FairValue:   entry.FairValue,
+					Source:      entry.Source,
+					RecordedAt:  entry.RecordedAt,
+				}
+				if err := tx.Create(&history).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to save fair value history")
+				}
+			}
+
+			stock.FairValue = services.Median(values)
+			stock.FairValueSource = fmt.Sprintf("Trusted multi-source consensus (%d entries), %s", len(entries), time.Now().Format("2006-01-02"))
+			stock.LastUpdated = time.Now()
+
+			services.CalculateMetrics(stock)
+			if err := h.updateStockUSDValues(stock); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to convert stock values")
+			}
+
+			if err := tx.Save(stock).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to update stock")
+			}
+
+			snapshot := models.StockHistory{
+				StockID:             stock.ID,
+				PortfolioID:         stock.PortfolioID,
+				Ticker:              stock.Ticker,
+				CurrentPrice:        stock.CurrentPrice,
+				FairValue:           stock.FairValue,
+				UpsidePotential:     stock.UpsidePotential,
+				DownsideRisk:        stock.DownsideRisk,
+				ProbabilityPositive: stock.ProbabilityPositive,
+				ExpectedValue:       stock.ExpectedValue,
+				KellyFraction:       stock.KellyFraction,
+				Weight:              stock.Weight,
+				Assessment:          stock.Assessment,
+				RecordedAt:          time.Now(),
+			}
+			if err := tx.Create(&snapshot).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to save stock history snapshot")
+			}
+
+			if err := tx.Commit().Error; err != nil {
+				return fmt.Errorf("failed to commit transaction")
+			}
+			return nil
+		}()
+
+		if txErr != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", stock.Ticker, txErr))
+			continue
+		}
+
+		totalSources += len(entries)
+		updated++
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":              "Fair value collection completed",
+		"updated":              updated,
+		"errors":               len(errors),
+		"error_details":        errors,
+		"total_requested":       len(req.IDs),
+		"trusted_entries_saved": totalSources,
+	})
+}
+
 // UpdateSingleStock updates a single stock's data
 func (h *StockHandler) UpdateSingleStock(c *gin.Context) {
 	id := c.Param("id")
@@ -738,6 +867,34 @@ func (h *StockHandler) GetStockHistory(c *gin.Context) {
 	if err := h.db.Where("stock_id = ? AND portfolio_id = ?", id, portfolioID).Order("recorded_at DESC").Limit(100).Find(&history).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to fetch stock history")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch history"})
+		return
+	}
+
+	c.JSON(http.StatusOK, history)
+}
+
+// GetFairValueHistory returns source-level fair value history for a stock.
+func (h *StockHandler) GetFairValueHistory(c *gin.Context) {
+	id := c.Param("id")
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
+	var stock models.Stock
+	if err := h.db.Where("id = ? AND portfolio_id = ?", id, portfolioID).First(&stock).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
+		return
+	}
+
+	var history []models.FairValueHistory
+	if err := h.db.Where("stock_id = ? AND portfolio_id = ?", id, portfolioID).
+		Order("recorded_at DESC").
+		Limit(300).
+		Find(&history).Error; err != nil {
+		h.logger.Error().Err(err).Msg("Failed to fetch fair value history")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch fair value history"})
 		return
 	}
 

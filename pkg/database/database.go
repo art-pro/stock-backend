@@ -64,6 +64,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&models.Portfolio{},
 		&models.Stock{},
 		&models.StockHistory{},
+		&models.FairValueHistory{},
 		&models.DeletedStock{},
 		&models.PortfolioSettings{},
 		&models.Alert{},

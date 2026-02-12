@@ -16,7 +16,7 @@ Primary runtime path is `pkg/*` (see `main.go` imports).
 ## Architecture and Subsystems
 
 - `pkg/api/` - HTTP layer (routing, handlers, auth-protected endpoints)
-- `pkg/services/` - domain logic (calculations, exchange rates, external APIs, alerts)
+- `pkg/services/` - domain logic (calculations, exchange rates, external APIs, alerts, fair value collection)
 - `pkg/scheduler/` - cron jobs for periodic stock updates and alert checks
 - `pkg/database/` - DB init, migrations, default entities, portfolio helpers
 - `pkg/models/` - data model schema and persisted fields
@@ -167,6 +167,9 @@ Public (`/api`):
 Protected (`/api`, JWT):
 - Auth/user: logout, change password/username, current user
 - Stocks: CRUD, field/price patch, single/bulk/all updates, batch fetch
+- Trusted fair value sync:
+  - `POST /stocks/fair-value/collect`
+  - `GET /stocks/:id/fair-value-history`
 - History: stock history
 - Deleted log: list + restore
 - Portfolio: summary + settings
@@ -208,6 +211,7 @@ Implemented in `pkg/api/handlers/assessment_handler.go`.
 
 Key entities in `pkg/models/models.go`:
 - `Stock`, `StockHistory`, `DeletedStock`
+- `FairValueHistory` (source-level fair value audit trail)
 - `Portfolio`, `PortfolioSettings`
 - `ExchangeRate`, `CashHolding`
 - `Alert`, `Assessment`, `User`, `UserSettings`
@@ -234,6 +238,31 @@ Primary variables:
 4. Prefer explicit failure to silent fallback for financial-critical computations.
 5. Keep DB writes atomic when state spans multiple tables.
 6. Update tests whenever formulas, thresholds, or unit semantics change.
+
+## Trusted Fair Value Collection (New in v2.6.0)
+
+Implemented flow:
+- New service: `pkg/services/fair_value_collector.go`
+- Uses both LLM providers:
+  - Grok (`XAI_API_KEY`)
+  - Deepseek (`DEEPSEEK_API_KEY`)
+- Each provider is prompted to return source-level fair values with:
+  - numeric fair value
+  - source name
+  - source URL
+  - as-of date
+
+Trust and freshness enforcement:
+- Accept only trusted domains:
+  - `reuters.com`, `bloomberg.com`, `marketscreener.com`, `finance.yahoo.com`, `morningstar.com`, `wsj.com`, `marketwatch.com`
+- Require parseable date and reject stale entries older than 45 days.
+- Require at least 2 validated entries per stock.
+
+Update behavior:
+- Persist each accepted entry into `FairValueHistory`.
+- Set stock fair value to median of accepted entries.
+- Update `FairValueSource` as trusted multi-source consensus metadata.
+- Recalculate EV/Kelly/assessment and persist stock + `StockHistory` snapshot in one transaction.
 
 ## Quick Runbook
 
