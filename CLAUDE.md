@@ -85,6 +85,14 @@ Implemented in `pkg/services/calculations.go`.
    - Solve required upside from EV equation.
    - `BuyZoneMax = FairValue / (1 + requiredUpside/100)`
    - `BuyZoneMin = BuyZoneMax * 0.90`
+10. **Sell zone (EV targets = 3% and 0%)**
+   - Uses closed-form threshold solving with same EV model:
+     - `CP = (100 * p * FV) / (EV_threshold + 100*p - (1-p)*D)`
+   - Where `D` is negative downside risk.
+   - `SellZoneLowerBound` uses `EV_threshold = 3` (trim start).
+   - `SellZoneUpperBound` uses `EV_threshold = 0` (sell start).
+   - A valid sell zone requires `SellZoneLowerBound < SellZoneUpperBound`.
+   - Otherwise set status to `no sell zone`.
 
 ### Dedicated Buy Zone Calculator (`CalculateBuyZoneResult`)
 - Added dedicated helper to compute buy-zone limits and current EV for explicit inputs:
@@ -105,6 +113,26 @@ Implemented in `pkg/services/calculations.go`.
   - within bounds -> `within buy zone`
   - above upper bound -> `outside buy zone`
   - invalid ordering -> `no buy zone available`
+- Covered by unit tests in `pkg/services/calculations_test.go`.
+
+### Dedicated Sell Zone Calculator (`CalculateSellZoneResult`)
+- Added dedicated helper to compute sell-zone limits and current EV for explicit inputs:
+  - inputs: `ticker`, `fair_value`, `probability_positive`, `downside_risk`, `current_price`
+  - output: JSON-friendly struct with:
+    - `sell_zone.sell_zone_lower_bound` (EV threshold 3%)
+    - `sell_zone.sell_zone_upper_bound` (EV threshold 0%)
+    - `current_expected_value`
+    - `sell_zone_status`
+- Uses the same closed-form threshold solving with EV target substitution.
+- Validation rules:
+  - `probability_positive` in `[0,1]`
+  - `downside_risk` must be negative
+  - `fair_value` must be positive
+- Status semantics:
+  - `current_expected_value > 3` -> `Below sell zone`
+  - `0 < current_expected_value <= 3` -> `In trim zone`
+  - `current_expected_value <= 0` -> `In sell zone`
+  - invalid ordering (`trim >= sell`) -> `no sell zone`
 - Covered by unit tests in `pkg/services/calculations_test.go`.
 
 ### Portfolio-Level Pipeline (`CalculatePortfolioMetrics`)
