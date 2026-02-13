@@ -94,26 +94,33 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 	}
 
 	for i := range stocks {
-		if stocks[i].SharesOwned <= 0 {
-			continue
+		// Recalculate canonical derived metrics on summary refresh so newly added
+		// fields (e.g., sell-zone bounds/status) are populated for existing rows.
+		services.CalculateMetrics(&stocks[i])
+
+		if stocks[i].SharesOwned > 0 {
+			fxRate := fxRates[stocks[i].Currency]
+			if fxRate <= 0 {
+				h.logger.Warn().Str("ticker", stocks[i].Ticker).Str("currency", stocks[i].Currency).Msg("Missing exchange rate for stock currency, skipping weight/value update")
+			} else {
+				// Convert to EUR (base currency)
+				valueEUR := float64(stocks[i].SharesOwned) * stocks[i].CurrentPrice / fxRate
+				if metrics.TotalValue > 0 {
+					stocks[i].Weight = (valueEUR / metrics.TotalValue) * 100
+					stocks[i].CurrentValueUSD = valueEUR * usdRate // Store in USD for backward compatibility
+				}
+			}
+		} else {
+			// No active position: keep portfolio-specific value/weight clean.
+			stocks[i].Weight = 0
+			stocks[i].CurrentValueUSD = 0
 		}
 
-		fxRate := fxRates[stocks[i].Currency]
-		if fxRate <= 0 {
-			h.logger.Warn().Str("ticker", stocks[i].Ticker).Str("currency", stocks[i].Currency).Msg("Missing exchange rate for stock currency, skipping weight/value update")
-			continue
-		}
-		// Convert to EUR (base currency)
-		valueEUR := float64(stocks[i].SharesOwned) * stocks[i].CurrentPrice / fxRate
-		if metrics.TotalValue > 0 {
-			stocks[i].Weight = (valueEUR / metrics.TotalValue) * 100
-			stocks[i].CurrentValueUSD = valueEUR * usdRate // Store in USD for backward compatibility
-			if err := tx.Save(&stocks[i]).Error; err != nil {
-				tx.Rollback()
-				h.logger.Error().Err(err).Msg("Failed to persist stock summary values")
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update portfolio summary"})
-				return
-			}
+		if err := tx.Save(&stocks[i]).Error; err != nil {
+			tx.Rollback()
+			h.logger.Error().Err(err).Msg("Failed to persist stock summary values")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update portfolio summary"})
+			return
 		}
 	}
 
