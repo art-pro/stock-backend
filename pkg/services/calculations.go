@@ -98,6 +98,22 @@ func CalculateMetrics(stock *models.Stock) {
 			stock.BuyZoneMin = stock.CurrentPrice * 0.85
 			stock.BuyZoneMax = stock.CurrentPrice * 0.95
 		}
+		if stock.BuyZoneMin > stock.BuyZoneMax || stock.BuyZoneMin <= 0 || stock.BuyZoneMax <= 0 {
+			stock.BuyZoneStatus = "no buy zone available"
+		} else if stock.CurrentPrice > 0 {
+			switch {
+			case stock.CurrentPrice < stock.BuyZoneMin:
+				stock.BuyZoneStatus = "EV >> 15%"
+			case stock.CurrentPrice <= stock.BuyZoneMax:
+				stock.BuyZoneStatus = "within buy zone"
+			default:
+				stock.BuyZoneStatus = "outside buy zone"
+			}
+		}
+	} else {
+		stock.BuyZoneMin = 0
+		stock.BuyZoneMax = 0
+		stock.BuyZoneStatus = "no buy zone available"
 	}
 
 	// 10. Sell zone thresholds:

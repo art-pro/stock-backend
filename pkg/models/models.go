@@ -68,6 +68,7 @@ type Stock struct {
 	UnrealizedPnL         float64    `json:"unrealized_pnl"`                          // In USD
 	BuyZoneMin            float64    `json:"buy_zone_min"`                            // Minimum price for buy zone
 	BuyZoneMax            float64    `json:"buy_zone_max"`                            // Maximum price for buy zone
+	BuyZoneStatus         string     `json:"buy_zone_status"`                         // EV >> 15%/within/outside buy zone
 	SellZoneLowerBound    float64    `json:"sell_zone_lower_bound"`                   // Trim zone start (EV = 3%)
 	SellZoneUpperBound    float64    `json:"sell_zone_upper_bound"`                   // Sell zone start (EV = 0%)
 	SellZoneStatus        string     `json:"sell_zone_status"`                        // Below/In trim/In sell zone

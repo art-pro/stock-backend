@@ -1012,6 +1012,7 @@ func (h *StockHandler) ExportJSON(c *gin.Context) {
 		AvgPriceLocal       float64 `json:"avg_price_local"`
 		BuyZoneMin          float64 `json:"buy_zone_min"`
 		BuyZoneMax          float64 `json:"buy_zone_max"`
+		BuyZoneStatus       string  `json:"buy_zone_status"`
 		SellZoneLowerBound  float64 `json:"sell_zone_lower_bound"`
 		SellZoneUpperBound  float64 `json:"sell_zone_upper_bound"`
 		SellZoneStatus      string  `json:"sell_zone_status"`
@@ -1050,6 +1051,7 @@ func (h *StockHandler) ExportJSON(c *gin.Context) {
 			AvgPriceLocal:       stock.AvgPriceLocal,
 			BuyZoneMin:          stock.BuyZoneMin,
 			BuyZoneMax:          stock.BuyZoneMax,
+			BuyZoneStatus:       stock.BuyZoneStatus,
 			SellZoneLowerBound:  stock.SellZoneLowerBound,
 			SellZoneUpperBound:  stock.SellZoneUpperBound,
 			SellZoneStatus:      stock.SellZoneStatus,
@@ -1097,6 +1099,7 @@ type BulkStockData struct {
 	AvgPriceLocal       float64 `json:"avg_price_local"`
 	BuyZoneMin          float64 `json:"buy_zone_min"`
 	BuyZoneMax          float64 `json:"buy_zone_max"`
+	BuyZoneStatus       string  `json:"buy_zone_status"`
 	SellZoneLowerBound  float64 `json:"sell_zone_lower_bound"`
 	SellZoneUpperBound  float64 `json:"sell_zone_upper_bound"`
 	SellZoneStatus      string  `json:"sell_zone_status"`
@@ -1157,6 +1160,7 @@ func (h *StockHandler) BulkUpdateStocks(c *gin.Context) {
 				AvgPriceLocal:       stockData.AvgPriceLocal,
 				BuyZoneMin:          stockData.BuyZoneMin,
 				BuyZoneMax:          stockData.BuyZoneMax,
+				BuyZoneStatus:       stockData.BuyZoneStatus,
 				SellZoneLowerBound:  stockData.SellZoneLowerBound,
 				SellZoneUpperBound:  stockData.SellZoneUpperBound,
 				SellZoneStatus:      stockData.SellZoneStatus,
@@ -1259,6 +1263,9 @@ func (h *StockHandler) BulkUpdateStocks(c *gin.Context) {
 			}
 			if stockData.BuyZoneMax > 0 {
 				existing.BuyZoneMax = stockData.BuyZoneMax
+			}
+			if stockData.BuyZoneStatus != "" {
+				existing.BuyZoneStatus = stockData.BuyZoneStatus
 			}
 			if stockData.SellZoneLowerBound > 0 {
 				existing.SellZoneLowerBound = stockData.SellZoneLowerBound
