@@ -99,6 +99,28 @@ func CalculateMetrics(stock *models.Stock) {
 			stock.BuyZoneMax = stock.CurrentPrice * 0.95
 		}
 	}
+
+	// 10. Sell zone thresholds:
+	// - lower bound: EV = 3% (trim zone start)
+	// - upper bound: EV = 0% (sell zone start)
+	sellLowerBound, okTrim := solvePriceForEVThreshold(stock.FairValue, stock.ProbabilityPositive, stock.DownsideRisk, 3)
+	sellUpperBound, okSell := solvePriceForEVThreshold(stock.FairValue, stock.ProbabilityPositive, stock.DownsideRisk, 0)
+	if okTrim && okSell && sellLowerBound < sellUpperBound {
+		stock.SellZoneLowerBound = sellLowerBound
+		stock.SellZoneUpperBound = sellUpperBound
+		switch {
+		case stock.ExpectedValue > 3:
+			stock.SellZoneStatus = "Below sell zone"
+		case stock.ExpectedValue > 0:
+			stock.SellZoneStatus = "In trim zone"
+		default:
+			stock.SellZoneStatus = "In sell zone"
+		}
+	} else {
+		stock.SellZoneLowerBound = 0
+		stock.SellZoneUpperBound = 0
+		stock.SellZoneStatus = "no sell zone"
+	}
 }
 
 // CalculatePortfolioMetrics calculates portfolio-level metrics
@@ -190,6 +212,21 @@ type BuyZoneCalculationResult struct {
 	ZoneStatus          string  `json:"zone_status,omitempty"`
 }
 
+type SellZone struct {
+	LowerBound float64 `json:"sell_zone_lower_bound"`
+	UpperBound float64 `json:"sell_zone_upper_bound"`
+}
+
+type SellZoneCalculationResult struct {
+	Ticker               string   `json:"ticker"`
+	FairValue            float64  `json:"fair_value"`
+	ProbabilityPositive  float64  `json:"probability_positive"`
+	DownsideRisk         float64  `json:"downside_risk"`
+	SellZone             SellZone `json:"sell_zone"`
+	CurrentExpectedValue float64  `json:"current_expected_value"`
+	SellZoneStatus       string   `json:"sell_zone_status,omitempty"`
+}
+
 // CalculateBuyZoneResult calculates buy-zone bounds from EV thresholds and returns
 // the current EV plus status classification for a provided current price.
 func CalculateBuyZoneResult(
@@ -242,6 +279,59 @@ func CalculateBuyZoneResult(
 			result.ZoneStatus = "within buy zone"
 		default:
 			result.ZoneStatus = "outside buy zone"
+		}
+	}
+
+	return result, nil
+}
+
+// CalculateSellZoneResult calculates sell-zone bounds from EV thresholds and returns
+// current EV plus classification for trim/sell actioning.
+func CalculateSellZoneResult(
+	ticker string,
+	fairValue float64,
+	probabilityPositive float64,
+	downsideRisk float64,
+	currentPrice float64,
+) (SellZoneCalculationResult, error) {
+	result := SellZoneCalculationResult{
+		Ticker:              ticker,
+		FairValue:           fairValue,
+		ProbabilityPositive: probabilityPositive,
+		DownsideRisk:        downsideRisk,
+	}
+
+	if probabilityPositive < 0 || probabilityPositive > 1 {
+		return result, fmt.Errorf("probability_positive must be between 0 and 1")
+	}
+	if downsideRisk >= 0 {
+		return result, fmt.Errorf("downside_risk must be negative")
+	}
+	if fairValue <= 0 {
+		return result, fmt.Errorf("fair_value must be positive")
+	}
+
+	trimPrice, okTrim := solvePriceForEVThreshold(fairValue, probabilityPositive, downsideRisk, 3)
+	sellPrice, okSell := solvePriceForEVThreshold(fairValue, probabilityPositive, downsideRisk, 0)
+	if !okTrim || !okSell || trimPrice >= sellPrice {
+		result.SellZoneStatus = "no sell zone"
+		return result, nil
+	}
+
+	result.SellZone = SellZone{
+		LowerBound: trimPrice,
+		UpperBound: sellPrice,
+	}
+
+	if currentPrice > 0 {
+		result.CurrentExpectedValue = expectedValueAtPrice(fairValue, probabilityPositive, downsideRisk, currentPrice)
+		switch {
+		case result.CurrentExpectedValue > 3:
+			result.SellZoneStatus = "Below sell zone"
+		case result.CurrentExpectedValue > 0:
+			result.SellZoneStatus = "In trim zone"
+		default:
+			result.SellZoneStatus = "In sell zone"
 		}
 	}
 

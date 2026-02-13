@@ -1012,6 +1012,9 @@ func (h *StockHandler) ExportJSON(c *gin.Context) {
 		AvgPriceLocal       float64 `json:"avg_price_local"`
 		BuyZoneMin          float64 `json:"buy_zone_min"`
 		BuyZoneMax          float64 `json:"buy_zone_max"`
+		SellZoneLowerBound  float64 `json:"sell_zone_lower_bound"`
+		SellZoneUpperBound  float64 `json:"sell_zone_upper_bound"`
+		SellZoneStatus      string  `json:"sell_zone_status"`
 		Assessment          string  `json:"assessment"`
 		UpdateFrequency     string  `json:"update_frequency"`
 		DataSource          string  `json:"data_source"`
@@ -1047,6 +1050,9 @@ func (h *StockHandler) ExportJSON(c *gin.Context) {
 			AvgPriceLocal:       stock.AvgPriceLocal,
 			BuyZoneMin:          stock.BuyZoneMin,
 			BuyZoneMax:          stock.BuyZoneMax,
+			SellZoneLowerBound:  stock.SellZoneLowerBound,
+			SellZoneUpperBound:  stock.SellZoneUpperBound,
+			SellZoneStatus:      stock.SellZoneStatus,
 			Assessment:          stock.Assessment,
 			UpdateFrequency:     stock.UpdateFrequency,
 			DataSource:          "Manual", // Default as per template
@@ -1091,6 +1097,9 @@ type BulkStockData struct {
 	AvgPriceLocal       float64 `json:"avg_price_local"`
 	BuyZoneMin          float64 `json:"buy_zone_min"`
 	BuyZoneMax          float64 `json:"buy_zone_max"`
+	SellZoneLowerBound  float64 `json:"sell_zone_lower_bound"`
+	SellZoneUpperBound  float64 `json:"sell_zone_upper_bound"`
+	SellZoneStatus      string  `json:"sell_zone_status"`
 	Assessment          string  `json:"assessment"`
 	UpdateFrequency     string  `json:"update_frequency"`
 	DataSource          string  `json:"data_source"`
@@ -1148,6 +1157,9 @@ func (h *StockHandler) BulkUpdateStocks(c *gin.Context) {
 				AvgPriceLocal:       stockData.AvgPriceLocal,
 				BuyZoneMin:          stockData.BuyZoneMin,
 				BuyZoneMax:          stockData.BuyZoneMax,
+				SellZoneLowerBound:  stockData.SellZoneLowerBound,
+				SellZoneUpperBound:  stockData.SellZoneUpperBound,
+				SellZoneStatus:      stockData.SellZoneStatus,
 				Assessment:          stockData.Assessment,
 				UpdateFrequency:     stockData.UpdateFrequency,
 				DataSource:          stockData.DataSource,
@@ -1247,6 +1259,15 @@ func (h *StockHandler) BulkUpdateStocks(c *gin.Context) {
 			}
 			if stockData.BuyZoneMax > 0 {
 				existing.BuyZoneMax = stockData.BuyZoneMax
+			}
+			if stockData.SellZoneLowerBound > 0 {
+				existing.SellZoneLowerBound = stockData.SellZoneLowerBound
+			}
+			if stockData.SellZoneUpperBound > 0 {
+				existing.SellZoneUpperBound = stockData.SellZoneUpperBound
+			}
+			if stockData.SellZoneStatus != "" {
+				existing.SellZoneStatus = stockData.SellZoneStatus
 			}
 			if stockData.Assessment != "" {
 				existing.Assessment = stockData.Assessment

@@ -156,3 +156,48 @@ func TestCalculateBuyZoneResult_StatusClassifications(t *testing.T) {
 		t.Fatalf("ZoneStatus within zone: got %s want %s", result.ZoneStatus, "within buy zone")
 	}
 }
+
+func TestCalculateSellZoneResult_ValidInput(t *testing.T) {
+	result, err := CalculateSellZoneResult("UNH", 380, 0.65, -15, 350)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertClose(t, result.SellZone.LowerBound, 337.2014, 0.05, "SellZoneLowerBound")
+	assertClose(t, result.SellZone.UpperBound, 351.6014, 0.05, "SellZoneUpperBound")
+	assertClose(t, result.CurrentExpectedValue, 0.3214, 0.02, "CurrentExpectedValue")
+
+	if result.SellZoneStatus != "In trim zone" {
+		t.Fatalf("SellZoneStatus: got %s want %s", result.SellZoneStatus, "In trim zone")
+	}
+}
+
+func TestCalculateSellZoneResult_ValidationErrors(t *testing.T) {
+	_, err := CalculateSellZoneResult("X", 100, -0.1, -20, 90)
+	if err == nil {
+		t.Fatalf("expected error for probability_positive < 0")
+	}
+
+	_, err = CalculateSellZoneResult("X", 100, 0.65, 10, 90)
+	if err == nil {
+		t.Fatalf("expected error for non-negative downside_risk")
+	}
+}
+
+func TestCalculateMetricsSetsSellZoneFields(t *testing.T) {
+	stock := models.Stock{
+		CurrentPrice:        340,
+		FairValue:           380,
+		ProbabilityPositive: 0.65,
+		DownsideRisk:        -15,
+	}
+
+	CalculateMetrics(&stock)
+
+	if stock.SellZoneLowerBound <= 0 || stock.SellZoneUpperBound <= 0 {
+		t.Fatalf("expected sell zone bounds to be set, got lower=%f upper=%f", stock.SellZoneLowerBound, stock.SellZoneUpperBound)
+	}
+	if stock.SellZoneLowerBound >= stock.SellZoneUpperBound {
+		t.Fatalf("expected sell lower bound < upper bound, got lower=%f upper=%f", stock.SellZoneLowerBound, stock.SellZoneUpperBound)
+	}
+}

@@ -68,6 +68,9 @@ type Stock struct {
 	UnrealizedPnL         float64    `json:"unrealized_pnl"`                          // In USD
 	BuyZoneMin            float64    `json:"buy_zone_min"`                            // Minimum price for buy zone
 	BuyZoneMax            float64    `json:"buy_zone_max"`                            // Maximum price for buy zone
+	SellZoneLowerBound    float64    `json:"sell_zone_lower_bound"`                   // Trim zone start (EV = 3%)
+	SellZoneUpperBound    float64    `json:"sell_zone_upper_bound"`                   // Sell zone start (EV = 0%)
+	SellZoneStatus        string     `json:"sell_zone_status"`                        // Below/In trim/In sell zone
 	Assessment            string     `json:"assessment"`                              // Hold/Add/Trim/Sell
 	UpdateFrequency       string     `json:"update_frequency"`                        // daily/weekly/monthly/manually
 	DataSource            string     `json:"data_source"`                             // Source of data (e.g., "Grok", "Alpha Vantage", "Manual")
