@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/art-pro/stock-backend/pkg/models"
@@ -172,4 +173,104 @@ type PortfolioMetrics struct {
 	SharpeRatio        float64            `json:"sharpe_ratio"`
 	KellyUtilization   float64            `json:"kelly_utilization"`
 	SectorWeights      map[string]float64 `json:"sector_weights"`
+}
+
+type BuyZone struct {
+	LowerBound float64 `json:"lower_bound"`
+	UpperBound float64 `json:"upper_bound"`
+}
+
+type BuyZoneCalculationResult struct {
+	Ticker              string  `json:"ticker"`
+	FairValue           float64 `json:"fair_value"`
+	ProbabilityPositive float64 `json:"probability_positive"`
+	DownsideRisk        float64 `json:"downside_risk"`
+	BuyZone             BuyZone `json:"buy_zone"`
+	CurrentExpectedValue float64 `json:"current_expected_value"`
+	ZoneStatus          string  `json:"zone_status,omitempty"`
+}
+
+// CalculateBuyZoneResult calculates buy-zone bounds from EV thresholds and returns
+// the current EV plus status classification for a provided current price.
+func CalculateBuyZoneResult(
+	ticker string,
+	fairValue float64,
+	probabilityPositive float64,
+	downsideRisk float64,
+	currentPrice float64,
+) (BuyZoneCalculationResult, error) {
+	result := BuyZoneCalculationResult{
+		Ticker:              ticker,
+		FairValue:           fairValue,
+		ProbabilityPositive: probabilityPositive,
+		DownsideRisk:        downsideRisk,
+	}
+
+	if probabilityPositive < 0 || probabilityPositive > 1 {
+		return result, fmt.Errorf("probability_positive must be between 0 and 1")
+	}
+	if downsideRisk >= 0 {
+		return result, fmt.Errorf("downside_risk must be negative")
+	}
+	if fairValue <= 0 {
+		return result, fmt.Errorf("fair_value must be positive")
+	}
+
+	lowerBound, okLower := solvePriceForEVThreshold(fairValue, probabilityPositive, downsideRisk, 15)
+	upperBound, okUpper := solvePriceForEVThreshold(fairValue, probabilityPositive, downsideRisk, 7)
+	if !okLower || !okUpper {
+		result.ZoneStatus = "no buy zone available"
+		return result, nil
+	}
+
+	result.BuyZone = BuyZone{
+		LowerBound: lowerBound,
+		UpperBound: upperBound,
+	}
+
+	if result.BuyZone.LowerBound > result.BuyZone.UpperBound {
+		result.ZoneStatus = "no buy zone available"
+		return result, nil
+	}
+
+	if currentPrice > 0 {
+		result.CurrentExpectedValue = expectedValueAtPrice(fairValue, probabilityPositive, downsideRisk, currentPrice)
+		switch {
+		case currentPrice < result.BuyZone.LowerBound:
+			result.ZoneStatus = "EV >> 15%"
+		case currentPrice <= result.BuyZone.UpperBound:
+			result.ZoneStatus = "within buy zone"
+		default:
+			result.ZoneStatus = "outside buy zone"
+		}
+	}
+
+	return result, nil
+}
+
+func expectedValueAtPrice(fairValue, probabilityPositive, downsideRisk, currentPrice float64) float64 {
+	if currentPrice <= 0 {
+		return 0
+	}
+	upsidePercent := ((fairValue - currentPrice) / currentPrice) * 100
+	return (probabilityPositive * upsidePercent) + ((1 - probabilityPositive) * downsideRisk)
+}
+
+func solvePriceForEVThreshold(
+	fairValue float64,
+	probabilityPositive float64,
+	downsideRisk float64,
+	evThreshold float64,
+) (float64, bool) {
+	downsideMagnitude := math.Abs(downsideRisk)
+	denominator := evThreshold + (100 * probabilityPositive) + ((1 - probabilityPositive) * downsideMagnitude)
+	if denominator <= 0 {
+		return 0, false
+	}
+
+	price := (100 * probabilityPositive * fairValue) / denominator
+	if math.IsNaN(price) || math.IsInf(price, 0) || price <= 0 {
+		return 0, false
+	}
+	return price, true
 }

@@ -107,3 +107,52 @@ func TestCalculatePortfolioMetrics(t *testing.T) {
 	assertClose(t, metrics.SectorWeights["Tech"], 66.6667, 0.05, "SectorWeights[Tech]")
 	assertClose(t, metrics.SectorWeights["Health"], 33.3333, 0.05, "SectorWeights[Health]")
 }
+
+func TestCalculateBuyZoneResult_ValidInput(t *testing.T) {
+	result, err := CalculateBuyZoneResult("UNH", 380, 0.65, -15, 284.37)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Ticker != "UNH" {
+		t.Fatalf("Ticker: got %s want %s", result.Ticker, "UNH")
+	}
+
+	assertClose(t, result.BuyZone.LowerBound, 289.7361, 0.02, "LowerBound")
+	assertClose(t, result.BuyZone.UpperBound, 319.7411, 0.02, "UpperBound")
+	assertClose(t, result.CurrentExpectedValue, 16.6087, 0.02, "CurrentExpectedValue")
+
+	if result.ZoneStatus != "EV >> 15%" {
+		t.Fatalf("ZoneStatus: got %s want %s", result.ZoneStatus, "EV >> 15%")
+	}
+}
+
+func TestCalculateBuyZoneResult_ValidationErrors(t *testing.T) {
+	_, err := CalculateBuyZoneResult("X", 100, 1.2, -20, 90)
+	if err == nil {
+		t.Fatalf("expected error for probability_positive > 1")
+	}
+
+	_, err = CalculateBuyZoneResult("X", 100, 0.65, 20, 90)
+	if err == nil {
+		t.Fatalf("expected error for non-negative downside_risk")
+	}
+}
+
+func TestCalculateBuyZoneResult_StatusClassifications(t *testing.T) {
+	result, err := CalculateBuyZoneResult("ABC", 120, 0.65, -25, 80)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ZoneStatus != "EV >> 15%" {
+		t.Fatalf("ZoneStatus below zone: got %s want %s", result.ZoneStatus, "EV >> 15%")
+	}
+
+	result, err = CalculateBuyZoneResult("ABC", 120, 0.65, -25, 90)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ZoneStatus != "within buy zone" {
+		t.Fatalf("ZoneStatus within zone: got %s want %s", result.ZoneStatus, "within buy zone")
+	}
+}

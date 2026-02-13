@@ -86,7 +86,7 @@ func (c *FairValueCollector) CollectTrustedFairValues(ctx context.Context, stock
 
 	if len(all) == 0 {
 		if len(errs) > 0 {
-			return nil, fmt.Errorf(strings.Join(errs, "; "))
+			return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
 		}
 		return nil, fmt.Errorf("no LLM provider configured (XAI_API_KEY / DEEPSEEK_API_KEY)")
 	}
@@ -107,7 +107,7 @@ func (c *FairValueCollector) CollectTrustedFairValues(ctx context.Context, stock
 		if len(errs) > 0 {
 			errDetail = errDetail + "; provider_errors=" + strings.Join(errs, " | ")
 		}
-		return nil, fmt.Errorf(errDetail)
+		return nil, fmt.Errorf("%s", errDetail)
 	}
 
 	return valid, nil
