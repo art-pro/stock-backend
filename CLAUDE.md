@@ -86,6 +86,27 @@ Implemented in `pkg/services/calculations.go`.
    - `BuyZoneMax = FairValue / (1 + requiredUpside/100)`
    - `BuyZoneMin = BuyZoneMax * 0.90`
 
+### Dedicated Buy Zone Calculator (`CalculateBuyZoneResult`)
+- Added dedicated helper to compute buy-zone limits and current EV for explicit inputs:
+  - inputs: `ticker`, `fair_value`, `probability_positive`, `downside_risk`, `current_price`
+  - output: JSON-friendly struct with:
+    - `buy_zone.lower_bound` (EV threshold 15%)
+    - `buy_zone.upper_bound` (EV threshold 7%)
+    - `current_expected_value`
+    - `zone_status`
+- Uses closed-form threshold solving:
+  - `CP = (100 * p * FV) / (EV_threshold + 100*p + (1-p)*|D|)`
+- Validation rules:
+  - `probability_positive` in `[0,1]`
+  - `downside_risk` must be negative
+  - `fair_value` must be positive
+- Status semantics:
+  - below lower bound -> `EV >> 15%`
+  - within bounds -> `within buy zone`
+  - above upper bound -> `outside buy zone`
+  - invalid ordering -> `no buy zone available`
+- Covered by unit tests in `pkg/services/calculations_test.go`.
+
 ### Portfolio-Level Pipeline (`CalculatePortfolioMetrics`)
 1. First pass:
    - For each owned position (`SharesOwned > 0`), convert to EUR and sum total.
