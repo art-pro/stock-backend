@@ -64,7 +64,7 @@ type Stock struct {
 	SharesOwned           int        `json:"shares_owned"`
 	AvgPriceLocal         float64    `json:"avg_price_local"`                         // Entry cost in local currency
 	CurrentValueUSD       float64    `json:"current_value_usd"`                       // Position value in USD
-	Weight                float64    `json:"weight"`                                  // Portfolio allocation percentage
+	Weight                float64    `json:"weight"`                                  // Portfolio allocation as fraction 0–1 (×100 for %)
 	UnrealizedPnL         float64    `json:"unrealized_pnl"`                          // In USD
 	BuyZoneMin            float64    `json:"buy_zone_min"`                            // Minimum price for buy zone
 	BuyZoneMax            float64    `json:"buy_zone_max"`                            // Maximum price for buy zone

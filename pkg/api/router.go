@@ -150,6 +150,9 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 
 		// Assessment routes (text-based)
 		protected.POST("/assessment/request", assessmentHandler.RequestAssessment)
+		protected.POST("/assessment/batch", assessmentHandler.BatchAssessment)
+		protected.POST("/assessment/explain", assessmentHandler.ExplainAssessment)
+		protected.POST("/assessment/sector-summary", assessmentHandler.SectorSummary)
 		protected.GET("/assessment/recent", assessmentHandler.GetRecentAssessments)
 		protected.GET("/assessment/:id", assessmentHandler.GetAssessmentById)
 

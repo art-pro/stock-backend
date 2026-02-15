@@ -179,10 +179,10 @@ func CalculatePortfolioMetrics(stocks []models.Stock, fxRates map[string]float64
 			weightedEV += stock.ExpectedValue * weight
 			weightedVolatility += stock.Volatility * weight
 
-			// Accumulate sector weights
-			sectorWeights[stock.Sector] += weight * 100
+			// Accumulate sector weights (fractions 0–1; see DATA_CONTRACT.md)
+			sectorWeights[stock.Sector] += weight
 
-			// Kelly utilization is sum of actual weights
+			// Kelly utilization is sum of actual weights (percentage 0–100 for display)
 			kellyUtilization += weight * 100
 		}
 	}

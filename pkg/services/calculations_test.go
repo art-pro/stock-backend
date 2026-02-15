@@ -104,8 +104,9 @@ func TestCalculatePortfolioMetrics(t *testing.T) {
 	assertClose(t, metrics.SharpeRatio, -0.025, 0.01, "SharpeRatio")
 	assertClose(t, metrics.KellyUtilization, 100, 0.01, "KellyUtilization")
 
-	assertClose(t, metrics.SectorWeights["Tech"], 66.6667, 0.05, "SectorWeights[Tech]")
-	assertClose(t, metrics.SectorWeights["Health"], 33.3333, 0.05, "SectorWeights[Health]")
+	// sector_weights are fractions 0–1 (DATA_CONTRACT.md)
+	assertClose(t, metrics.SectorWeights["Tech"], 0.666667, 0.0005, "SectorWeights[Tech]")
+	assertClose(t, metrics.SectorWeights["Health"], 0.333333, 0.0005, "SectorWeights[Health]")
 }
 
 func TestCalculateBuyZoneResult_ValidInput(t *testing.T) {

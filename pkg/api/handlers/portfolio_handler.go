@@ -106,7 +106,8 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 				// Convert to EUR (base currency)
 				valueEUR := float64(stocks[i].SharesOwned) * stocks[i].CurrentPrice / fxRate
 				if metrics.TotalValue > 0 {
-					stocks[i].Weight = (valueEUR / metrics.TotalValue) * 100
+					// Weight as fraction 0–1 (see DATA_CONTRACT.md)
+					stocks[i].Weight = valueEUR / metrics.TotalValue
 					stocks[i].CurrentValueUSD = valueEUR * usdRate // Store in USD for backward compatibility
 				}
 			}

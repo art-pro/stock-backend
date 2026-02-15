@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/art-pro/stock-backend/pkg/config"
+	"github.com/art-pro/stock-backend/pkg/database"
 	"github.com/art-pro/stock-backend/pkg/models"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
@@ -448,6 +450,259 @@ func (h *AssessmentHandler) GetAssessmentById(c *gin.Context) {
 	c.JSON(http.StatusOK, assessment)
 }
 
+// BatchAssessmentRequest is the request for batch assessment.
+type BatchAssessmentRequest struct {
+	Tickers []string `json:"tickers" binding:"required,max=10"`
+	Source  string   `json:"source"` // "grok" or "deepseek", default grok
+}
+
+// BatchAssessmentItem is one result in the batch assessment response.
+type BatchAssessmentItem struct {
+	Ticker          string `json:"ticker"`
+	AssessmentText  string `json:"assessment_text"`
+	Source          string `json:"source"`
+}
+
+// BatchAssessment runs LLM assessment for multiple tickers; returns text only (no DB write).
+func (h *AssessmentHandler) BatchAssessment(c *gin.Context) {
+	var req BatchAssessmentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	source := strings.ToLower(strings.TrimSpace(req.Source))
+	if source == "" {
+		source = "grok"
+	}
+	if source != "grok" && source != "deepseek" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "source must be 'grok' or 'deepseek'"})
+		return
+	}
+	if (source == "grok" && h.cfg.XAIAPIKey == "") || (source == "deepseek" && h.cfg.DeepseekAPIKey == "") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "requested LLM API key not configured"})
+		return
+	}
+
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
+	// Load stocks for context (ticker -> company name, price, currency)
+	stocksByTicker := make(map[string]*models.Stock)
+	var stocks []models.Stock
+	if err := h.db.Where("portfolio_id = ? AND ticker IN ?", portfolioID, req.Tickers).Find(&stocks).Error; err == nil {
+		for i := range stocks {
+			stocksByTicker[stocks[i].Ticker] = &stocks[i]
+		}
+	}
+	portfolioData, cashData, _ := h.fetchPortfolioContextForPortfolio(portfolioID)
+	systemContent := "You are a financial advisor using a probabilistic strategy. Provide a concise stock assessment (EV, Kelly, Add/Hold/Trim/Sell, key risks). Use the most recent market data. One structured paragraph per ticker."
+
+	var results []BatchAssessmentItem
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, ticker := range req.Tickers {
+		ticker := ticker
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var companyName string
+			var currentPrice float64
+			var currency string
+			if s := stocksByTicker[ticker]; s != nil {
+				companyName = s.CompanyName
+				currentPrice = s.CurrentPrice
+				currency = s.Currency
+			}
+			prompt := h.buildAssessmentPrompt(ticker, companyName, currentPrice, currency, portfolioData, cashData)
+			text, err := h.callChatCompletion(systemContent, prompt, source)
+			if err != nil {
+				h.logger.Warn().Err(err).Str("ticker", ticker).Msg("Batch assessment failed for ticker")
+				text = "Assessment unavailable: " + err.Error()
+			}
+			mu.Lock()
+			results = append(results, BatchAssessmentItem{Ticker: ticker, AssessmentText: text, Source: source})
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	// Preserve request order
+	order := make(map[string]int)
+	for i, t := range req.Tickers {
+		order[t] = i
+	}
+	// results may be in random order; sort by original ticker order
+	sorted := make([]BatchAssessmentItem, len(results))
+	for _, r := range results {
+		sorted[order[r.Ticker]] = r
+	}
+
+	c.JSON(http.StatusOK, gin.H{"assessments": sorted})
+}
+
+// ExplainAssessmentRequest can identify a stock by ID or by ticker + metrics.
+type ExplainAssessmentRequest struct {
+	StockID    *uint    `json:"stock_id"`
+	Ticker     string   `json:"ticker"`
+	EV         *float64 `json:"ev"`
+	Upside     *float64 `json:"upside"`
+	Downside   *float64 `json:"downside"`
+	Probability *float64 `json:"probability"`
+	Assessment string   `json:"assessment"`
+}
+
+// ExplainAssessment returns a short LLM explanation of why the model recommends Add/Hold/Trim/Sell.
+func (h *AssessmentHandler) ExplainAssessment(c *gin.Context) {
+	var req ExplainAssessmentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var ev, upside, downside, prob float64
+	var ticker, assessment string
+	source := "grok"
+	if h.cfg.XAIAPIKey == "" {
+		source = "deepseek"
+	}
+	if h.cfg.XAIAPIKey == "" && h.cfg.DeepseekAPIKey == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No LLM API key configured"})
+		return
+	}
+
+	if req.StockID != nil {
+		portfolioID, err := h.resolvePortfolioID(c)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+			return
+		}
+		var stock models.Stock
+		if err := h.db.Where("id = ? AND portfolio_id = ?", *req.StockID, portfolioID).First(&stock).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
+			return
+		}
+		ticker = stock.Ticker
+		ev = stock.ExpectedValue
+		upside = stock.UpsidePotential
+		downside = stock.DownsideRisk
+		prob = stock.ProbabilityPositive
+		assessment = stock.Assessment
+	} else {
+		if req.Ticker == "" || req.EV == nil || req.Upside == nil || req.Downside == nil || req.Probability == nil || req.Assessment == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Provide stock_id or (ticker, ev, upside, downside, probability, assessment)"})
+			return
+		}
+		ticker = req.Ticker
+		ev = *req.EV
+		upside = *req.Upside
+		downside = *req.Downside
+		prob = *req.Probability
+		assessment = req.Assessment
+	}
+
+	userContent := fmt.Sprintf(`Given the following metrics for %s:
+- Expected value (EV): %.2f%%
+- Upside potential: %.2f%%
+- Downside risk: %.2f%%
+- Probability of positive outcome: %.2f
+- Recommendation: %s
+
+In one short paragraph, explain why the model recommends this action (Add/Hold/Trim/Sell). Do not repeat the numbers; focus on the logic.`, ticker, ev, upside, downside, prob, assessment)
+
+	systemContent := "You are a concise financial analyst. Explain the rationale behind a probabilistic investment recommendation in one short paragraph."
+	text, err := h.callChatCompletion(systemContent, userContent, source)
+	if err != nil {
+		h.logger.Error().Err(err).Str("ticker", ticker).Msg("Explain assessment failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate explanation: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"text": text})
+}
+
+// SectorSummaryRequest is the request for sector/theme summary.
+type SectorSummaryRequest struct {
+	PortfolioID *uint   `json:"portfolio_id"`
+	Sector     string  `json:"sector"`
+	Tickers    []string `json:"tickers"`
+}
+
+// SectorSummary returns a short LLM narrative for a sector or list of tickers.
+func (h *AssessmentHandler) SectorSummary(c *gin.Context) {
+	var req SectorSummaryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	source := "grok"
+	if h.cfg.XAIAPIKey == "" {
+		source = "deepseek"
+	}
+	if h.cfg.XAIAPIKey == "" && h.cfg.DeepseekAPIKey == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No LLM API key configured"})
+		return
+	}
+
+	var tickers []string
+	var sectorName string
+	if len(req.Tickers) > 0 {
+		tickers = req.Tickers
+		sectorName = req.Sector
+		if sectorName == "" {
+			sectorName = "selected tickers"
+		}
+	} else if req.Sector != "" {
+		portfolioID, err := h.resolvePortfolioID(c)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+			return
+		}
+		if req.PortfolioID != nil {
+			portfolioID = *req.PortfolioID
+		}
+		var stocks []models.Stock
+		if err := h.db.Where("portfolio_id = ? AND LOWER(sector) = LOWER(?)", portfolioID, req.Sector).Find(&stocks).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load sector stocks"})
+			return
+		}
+		for _, s := range stocks {
+			tickers = append(tickers, s.Ticker)
+		}
+		sectorName = req.Sector
+		if len(tickers) == 0 {
+			c.JSON(http.StatusOK, gin.H{"text": "No stocks in this sector in the portfolio."})
+			return
+		}
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Provide sector or tickers"})
+		return
+	}
+
+	if len(tickers) == 0 {
+		c.JSON(http.StatusOK, gin.H{"text": "No tickers to summarise."})
+		return
+	}
+
+	userContent := fmt.Sprintf(`Summarise the following sector/theme for the given tickers.
+
+Sector/theme: %s
+Tickers: %s
+
+Provide a short narrative (2–4 sentences) covering: outlook, main risks, and how the sector fits with typical portfolio targets (diversification, sector limits). Use current market context.`, sectorName, strings.Join(tickers, ", "))
+
+	systemContent := "You are a concise portfolio analyst. Summarise a sector or theme in a short narrative: outlook, risks, and fit with targets."
+	text, err := h.callChatCompletion(systemContent, userContent, source)
+	if err != nil {
+		h.logger.Error().Err(err).Str("sector", sectorName).Msg("Sector summary failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate summary: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"text": text})
+}
+
 // generateGrokAssessment generates assessment using Grok AI
 func (h *AssessmentHandler) generateGrokAssessment(ticker, companyName string, currentPrice float64, currency string) (string, error) {
 	if h.cfg.XAIAPIKey == "" {
@@ -626,20 +881,112 @@ func (h *AssessmentHandler) generateDeepseekAssessment(ticker, companyName strin
 	return content, nil
 }
 
-// fetchPortfolioContext retrieves current portfolio and cash data for assessment context
+// resolvePortfolioID returns portfolio_id from query or default.
+func (h *AssessmentHandler) resolvePortfolioID(c *gin.Context) (uint, error) {
+	if portfolioIDParam := c.Query("portfolio_id"); portfolioIDParam != "" {
+		parsed, err := strconv.ParseUint(portfolioIDParam, 10, 32)
+		if err != nil {
+			return 0, err
+		}
+		return uint(parsed), nil
+	}
+	return database.GetDefaultPortfolioID(h.db)
+}
+
+// callChatCompletion calls Grok or Deepseek chat API and returns the assistant content.
+func (h *AssessmentHandler) callChatCompletion(systemContent, userContent, source string) (string, error) {
+	var url string
+	var apiKey string
+	var model string
+	if source == "deepseek" {
+		url = "https://api.deepseek.com/v1/chat/completions"
+		apiKey = h.cfg.DeepseekAPIKey
+		model = "deepseek-reasoner"
+	} else {
+		url = "https://api.x.ai/v1/chat/completions"
+		apiKey = h.cfg.XAIAPIKey
+		model = "grok-4-1-fast-reasoning-latest"
+	}
+	if apiKey == "" {
+		return "", fmt.Errorf("%s API key not configured", source)
+	}
+	reqBody := map[string]interface{}{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "system", "content": systemContent},
+			{"role": "user", "content": userContent},
+		},
+		"stream": false,
+	}
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("marshal request: %w", err)
+	}
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("call API: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("API status %d: %s", resp.StatusCode, string(body))
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", fmt.Errorf("parse response: %w", err)
+	}
+	choices, ok := parsed["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return "", fmt.Errorf("no choices in response")
+	}
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid choice format")
+	}
+	message, ok := choice["message"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid message format")
+	}
+	content, ok := message["content"].(string)
+	if !ok {
+		return "", fmt.Errorf("invalid content format")
+	}
+	return content, nil
+}
+
+// fetchPortfolioContext retrieves current portfolio and cash data for assessment context (all portfolios).
 func (h *AssessmentHandler) fetchPortfolioContext() ([]models.Stock, []models.CashHolding, error) {
-	// Fetch owned stocks (portfolio)
 	var portfolioStocks []models.Stock
 	if err := h.db.Where("shares_owned > 0").Find(&portfolioStocks).Error; err != nil {
 		return nil, nil, fmt.Errorf("failed to fetch portfolio stocks: %w", err)
 	}
-
-	// Fetch cash holdings
 	var cashHoldings []models.CashHolding
 	if err := h.db.Find(&cashHoldings).Error; err != nil {
 		return nil, nil, fmt.Errorf("failed to fetch cash holdings: %w", err)
 	}
+	return portfolioStocks, cashHoldings, nil
+}
 
+// fetchPortfolioContextForPortfolio retrieves portfolio and cash for a given portfolio_id.
+func (h *AssessmentHandler) fetchPortfolioContextForPortfolio(portfolioID uint) ([]models.Stock, []models.CashHolding, error) {
+	var portfolioStocks []models.Stock
+	if err := h.db.Where("portfolio_id = ? AND shares_owned > 0", portfolioID).Find(&portfolioStocks).Error; err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch portfolio stocks: %w", err)
+	}
+	var cashHoldings []models.CashHolding
+	if err := h.db.Where("portfolio_id = ?", portfolioID).Find(&cashHoldings).Error; err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch cash holdings: %w", err)
+	}
 	return portfolioStocks, cashHoldings, nil
 }
 

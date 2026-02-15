@@ -382,9 +382,9 @@ func (s *ExternalAPIService) FetchAllStockData(stock *models.Stock) error {
 				stock.EPSGrowthRate = parseFloat(overview.QuarterlyEarningsGrowthYOY) * 100
 			}
 
-			// Update sector if provided
+			// Update sector if provided (normalize to canonical taxonomy; see DATA_CONTRACT.md)
 			if overview.Sector != "" {
-				stock.Sector = overview.Sector
+				stock.Sector = models.NormalizeSector(overview.Sector)
 			}
 		} else {
 			fmt.Printf("⚠ Alpha Vantage overview error: %v\n", err)
@@ -799,9 +799,9 @@ func (s *ExternalAPIService) FetchFromAlphaVantage(stock *models.Stock) error {
 		stock.EPSGrowthRate = parseFloat(overview.QuarterlyEarningsGrowthYOY) * 100
 	}
 
-	// Update sector if provided
+	// Update sector if provided (normalize to canonical taxonomy; see DATA_CONTRACT.md)
 	if overview.Sector != "" {
-		stock.Sector = overview.Sector
+		stock.Sector = models.NormalizeSector(overview.Sector)
 	}
 
 	// Set data source
@@ -976,7 +976,7 @@ Return ONLY valid JSON (no markdown, no extra text):
 	stock.DividendYield = data.DividendYield
 
 	if data.Sector != "" {
-		stock.Sector = data.Sector
+		stock.Sector = models.NormalizeSector(data.Sector)
 	}
 
 	stock.DataSource = "Grok AI (Analytical)"

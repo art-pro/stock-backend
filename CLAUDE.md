@@ -39,6 +39,8 @@ Primary runtime path is `pkg/*` (see `main.go` imports).
 
 ## Data and Unit Semantics (Important)
 
+**See `DATA_CONTRACT.md`** for the formal API contract: **weights** (0–1 fractions for `sector_weights` and `stock.weight`), **`last_updated`** semantics, **fair value as-of** (history or future `fair_value_recorded_at`), and **sector taxonomy** (canonical names in `pkg/models/sectors.go`). Frontend and backend must stay aligned on these.
+
 - `ExchangeRate.Rate` means **currency units per 1 EUR**.
   - Example: if USD rate is 1.15, then `1 EUR = 1.15 USD`.
 - Convert local currency to EUR: `value_eur = value_local / rate[currency]`
@@ -254,9 +256,16 @@ Implemented in `pkg/api/handlers/assessment_handler.go`.
   - probabilistic framework instructions
   - portfolio/cash context block
 
+### LLM text-only endpoints (no DB write unless user applies)
+
+- **`POST /assessment/batch`** – Body: `{ "tickers": ["AAPL", "MSFT"], "source": "grok"|"deepseek" }` (source optional, default grok). Runs LLM assessment per ticker (max 10); returns `{ "assessments": [ { "ticker", "assessment_text", "source" } ] }`. Uses portfolio context from `portfolio_id` (query or default). Frontend can “Run assessment for selected tickers” from the dashboard.
+- **`POST /assessment/explain`** – Body: `{ "stock_id": 1 }` or `{ "ticker", "ev", "upside", "downside", "probability", "assessment" }`. Returns short paragraph: “Why is the recommendation Add/Hold/Trim/Sell?” in `{ "text": "..." }`. For modal or tooltip.
+- **`POST /assessment/sector-summary`** – Body: `{ "portfolio_id"?: id, "sector": "Technology" }` or `{ "tickers": ["AAPL", "MSFT"], "sector"?: "..." }`. Returns narrative (outlook, risks, fit with targets) in `{ "text": "..." }`. Frontend can “Summarise sector: Technology”.
+
+Same auth and optional `portfolio_id` query as other assessment routes.
+
 ### Important caveat
-- Portfolio context builder currently reads owned stocks/cash without strict portfolio scoping.
-- Consider adding `portfolio_id` to assessment requests for deterministic multi-portfolio behavior.
+- Portfolio context builder for single-ticker assessment currently reads owned stocks/cash without strict portfolio scoping. Batch, explain, and sector-summary use `resolvePortfolioID` (query or default).
 
 ## Persistence Model Highlights
 
