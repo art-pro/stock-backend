@@ -229,7 +229,7 @@ Protected (`/api`, JWT):
 - Alerts: list + delete
 - FX: list, refresh, add/update/delete currency
 - Cash: list/create/update/delete + refresh USD values
-- Assessment: request, vision extraction, recent/history
+- Assessment: request (body may include optional `rebalance_hint`, `concentration_hint`, `suggested_actions_hint` from frontend dashboard panes), vision extraction, recent/history
 - User settings: table column configuration; **sector allocation targets** (persistent per user):
   - `GET /settings/sector-targets` – returns `{ "rows": [ { "sector", "min", "max", "rationale" }, ... ] }` or `{ "rows": null }` if none saved. Stored in `UserSettings` with key `sector_targets`.
   - `POST /settings/sector-targets` – body `{ "rows": [...] }`; creates or updates the user’s sector targets (equity sectors + Cash). Used by frontend for rebalance hints and sector headers.
@@ -256,7 +256,16 @@ Implemented in `pkg/api/handlers/assessment_handler.go`.
   - current date
   - ticker context
   - probabilistic framework instructions
-  - portfolio/cash context block
+  - portfolio/cash context block (`buildPortfolioContext`: owned stocks table, sector allocations, cash)
+  - optional **dashboard hints** block when the frontend sends them (see below)
+
+### Single-ticker assessment (`POST /assessment/request`)
+
+- **Request body:** `ticker` (required), `source` (`grok`|`deepseek`), optional `company_name`, `current_price`, `currency`. Optional fields sent by the Request Stock Assessment page when portfolio/settings are available:
+  - `rebalance_hint` — text summary of sector rebalance (over/at/under/no target), from dashboard “Sector rebalance hint” pane.
+  - `concentration_hint` — largest position, top 3, top 5 % of equity, from “Concentration & tail risk” pane.
+  - `suggested_actions_hint` — suggested next actions (sector trim, sell/trim zone, buy zone add, high EV underweight), from “Suggested next actions” pane.
+- **Prompt building:** `buildAssessmentPrompt` builds the portfolio/cash context, then if any of the three hint strings are non-empty, appends a **“DASHBOARD HINTS (current portfolio state)”** section with those three blocks and a short instruction to consider them for recommendations. Grok and Deepseek both receive this full prompt; batch assessment does not send dashboard hints (empty strings passed).
 
 ### LLM text-only endpoints (no DB write unless user applies)
 
