@@ -291,6 +291,38 @@ Primary variables:
 6. Update tests whenever formulas, thresholds, or unit semantics change.
 7. Mutable endpoints are allow-listed (stock update, portfolio settings); extend the allow list explicitly when adding new editable fields to avoid mass assignment.
 8. JWT validation rejects unexpected signing methods; continue issuing HS256 tokens with the shared secret.
+9. **Rate limiting**: All endpoints are rate-limited (100 req/min per IP). Login has stricter limits (10 attempts/15 min). Extend `middleware.rateLimiter` for custom limits.
+10. **Security headers**: All responses include security headers (X-Content-Type-Options, X-Frame-Options, HSTS, CSP). Do not remove these.
+11. **Request size limits**: Image upload endpoints validate payload size (10 MB/image, max 10 images). Extend validation for new large-payload endpoints.
+12. **Thread-safety**: Shared caches (e.g., `exchangeRateCache` in `ExternalAPIService`) must use mutex protection for concurrent access.
+
+## Security Middleware Stack
+
+Implemented in `pkg/middleware/auth.go` and applied in `pkg/api/router.go`.
+
+### Rate Limiting
+- **Global rate limiter**: 100 requests per minute per IP address
+- **Login rate limiter**: 10 attempts per 15 minutes per IP (brute-force protection)
+- Implementation uses in-memory token bucket with automatic cleanup every 5 minutes
+- For production at scale, consider replacing with Redis-based solution
+
+### Security Headers
+All responses include:
+- `X-Content-Type-Options: nosniff`
+- `X-XSS-Protection: 1; mode=block`
+- `X-Frame-Options: DENY`
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+- `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`
+
+### Request Size Limits
+- Router-level multipart limit: 50 MB
+- Image extraction endpoint validates: max 10 images, max 10 MB per image
+- `RequestSizeLimitMiddleware(maxBytes)` available for custom per-route limits
+
+### Extending Security
+- To add custom rate limits: create new `rateLimiter` instance with desired `rate` and `window`
+- To add route-specific size limits: apply `middleware.RequestSizeLimitMiddleware(bytes)` to route group
 
 ## Trusted Fair Value Collection (New in v2.6.0)
 

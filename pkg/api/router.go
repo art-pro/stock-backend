@@ -15,7 +15,18 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	router := gin.Default()
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.Use(gin.Logger())
+
+	// Limit request body size (default 50MB for image uploads)
+	router.MaxMultipartMemory = 50 << 20 // 50 MB
+
+	// Apply security headers to all responses
+	router.Use(middleware.SecurityHeadersMiddleware())
+
+	// Apply global rate limiting
+	router.Use(middleware.RateLimitMiddleware())
 
 	// Custom CORS middleware to handle dynamic origins
 	router.Use(func(c *gin.Context) {
@@ -63,7 +74,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 	// Public routes
 	public := router.Group("/api")
 	{
-		public.POST("/login", authHandler.Login)
+		public.POST("/login", middleware.LoginRateLimitMiddleware(), authHandler.Login)
 		public.GET("/health", func(c *gin.Context) {
 			c.JSON(200, gin.H{"status": "ok"})
 		})
@@ -75,9 +86,10 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 		})
 	}
 
-	// Protected routes
+	// Protected routes with default 1MB body limit
 	protected := router.Group("/api")
 	protected.Use(middleware.AuthMiddleware(cfg))
+	protected.Use(middleware.RequestSizeLimitMiddleware(1 << 20)) // 1 MB default
 	{
 		// Auth routes
 		protected.POST("/logout", authHandler.Logout)
@@ -136,15 +148,22 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 		protected.DELETE("/cash/:id", cashHandler.DeleteCashHolding)
 		protected.POST("/cash/refresh", cashHandler.RefreshUSDValues)
 
-		// Assessment routes
+		// Assessment routes (text-based)
 		protected.POST("/assessment/request", assessmentHandler.RequestAssessment)
-		protected.POST("/assessment/extract-from-images", assessmentHandler.ExtractFromImages)
 		protected.GET("/assessment/recent", assessmentHandler.GetRecentAssessments)
 		protected.GET("/assessment/:id", assessmentHandler.GetAssessmentById)
 
 		// User Settings routes
 		protected.GET("/settings/columns", settingsHandler.GetColumnSettings)
 		protected.POST("/settings/columns", settingsHandler.SaveColumnSettings)
+	}
+
+	// Large payload routes (image uploads) with 100MB limit
+	largePayload := router.Group("/api")
+	largePayload.Use(middleware.AuthMiddleware(cfg))
+	largePayload.Use(middleware.RequestSizeLimitMiddleware(100 << 20)) // 100 MB for image uploads
+	{
+		largePayload.POST("/assessment/extract-from-images", assessmentHandler.ExtractFromImages)
 	}
 
 	return router

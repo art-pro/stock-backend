@@ -18,6 +18,7 @@ type ExternalAPIService struct {
 	cfg                   *config.Config
 	client                *http.Client
 	exchangeRateCache     map[string]float64 // Cache for exchange rates from Grok
+	exchangeRateCacheMu   sync.RWMutex       // Mutex for thread-safe cache access
 	lastAlphaVantageCall  time.Time          // Track last API call for rate limiting
 	alphaVantageCallMutex sync.Mutex         // Mutex for thread-safe rate limiting
 }
@@ -108,13 +109,17 @@ func (s *ExternalAPIService) enforceAlphaVantageRateLimit() {
 // cacheExchangeRate stores an exchange rate from Grok
 func (s *ExternalAPIService) cacheExchangeRate(currency string, rate float64) {
 	if rate > 0 {
+		s.exchangeRateCacheMu.Lock()
 		s.exchangeRateCache[currency] = rate
+		s.exchangeRateCacheMu.Unlock()
 	}
 }
 
 // getCachedExchangeRate retrieves a cached exchange rate
 func (s *ExternalAPIService) getCachedExchangeRate(currency string) (float64, bool) {
+	s.exchangeRateCacheMu.RLock()
 	rate, ok := s.exchangeRateCache[currency]
+	s.exchangeRateCacheMu.RUnlock()
 	return rate, ok
 }
 
@@ -278,7 +283,7 @@ func parseFloat(s string) float64 {
 		return 0
 	}
 	var f float64
-	fmt.Sscanf(s, "%f", &f)
+	_, _ = fmt.Sscanf(s, "%f", &f)
 	return f
 }
 
@@ -505,6 +510,11 @@ VERIFY: Current price must be LOWER than fair value if upside is positive. Use r
 			break
 		}
 
+		// Close response body from failed attempts to prevent resource leak
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+
 		if i < 2 {
 			time.Sleep(time.Duration(1<<uint(i)) * time.Second)
 		}
@@ -664,7 +674,8 @@ func (s *ExternalAPIService) FetchStockPrice(ticker string) (float64, error) {
 }
 
 // FetchGrokCalculations fetches stock calculations (now part of FetchAllStockData)
-func (s *ExternalAPIService) FetchGrokCalculations(stock *models.Stock) error {
+// Deprecated: This method is a no-op; use FetchAllStockData instead.
+func (s *ExternalAPIService) FetchGrokCalculations(_ *models.Stock) error {
 	// This now does nothing as FetchAllStockData handles everything
 	return nil
 }

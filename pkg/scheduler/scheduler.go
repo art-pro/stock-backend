@@ -20,27 +20,35 @@ func InitScheduler(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) {
 	exchangeRateService := services.NewExchangeRateService(db, logger)
 
 	// Daily update job
-	s.Every(1).Day().At("00:00").Do(func() {
+	if _, err := s.Every(1).Day().At("00:00").Do(func() {
 		logger.Info().Msg("Running daily stock update")
 		updateStocksWithFrequency(db, apiService, exchangeRateService, logger, "daily")
-	})
+	}); err != nil {
+		logger.Error().Err(err).Msg("Failed to schedule daily update job")
+	}
 
 	// Weekly update job (Mondays)
-	s.Every(1).Monday().At("00:00").Do(func() {
+	if _, err := s.Every(1).Monday().At("00:00").Do(func() {
 		logger.Info().Msg("Running weekly stock update")
 		updateStocksWithFrequency(db, apiService, exchangeRateService, logger, "weekly")
-	})
+	}); err != nil {
+		logger.Error().Err(err).Msg("Failed to schedule weekly update job")
+	}
 
 	// Monthly update job (1st of month)
-	s.Every(1).Month(1).At("00:00").Do(func() {
+	if _, err := s.Every(1).Month(1).At("00:00").Do(func() {
 		logger.Info().Msg("Running monthly stock update")
 		updateStocksWithFrequency(db, apiService, exchangeRateService, logger, "monthly")
-	})
+	}); err != nil {
+		logger.Error().Err(err).Msg("Failed to schedule monthly update job")
+	}
 
 	// Alert check job (every hour)
-	s.Every(1).Hour().Do(func() {
+	if _, err := s.Every(1).Hour().Do(func() {
 		checkAndSendAlerts(db, cfg, logger)
-	})
+	}); err != nil {
+		logger.Error().Err(err).Msg("Failed to schedule alert check job")
+	}
 
 	s.StartAsync()
 	logger.Info().Msg("Scheduler initialized and started")
@@ -74,7 +82,7 @@ func updateStocksWithFrequency(db *gorm.DB, apiService *services.ExternalAPIServ
 }
 
 // updateStock updates a single stock's data
-func updateStock(db *gorm.DB, apiService *services.ExternalAPIService, exchangeRateService *services.ExchangeRateService, stock *models.Stock, logger zerolog.Logger) error {
+func updateStock(db *gorm.DB, apiService *services.ExternalAPIService, exchangeRateService *services.ExchangeRateService, stock *models.Stock, _ zerolog.Logger) error {
 	oldEV := stock.ExpectedValue
 
 	// Fetch current price
@@ -83,11 +91,6 @@ func updateStock(db *gorm.DB, apiService *services.ExternalAPIService, exchangeR
 		return err
 	}
 	stock.CurrentPrice = price
-
-	// Fetch Grok calculations
-	if err := apiService.FetchGrokCalculations(stock); err != nil {
-		return err
-	}
 
 	// Calculate derived metrics
 	services.CalculateMetrics(stock)

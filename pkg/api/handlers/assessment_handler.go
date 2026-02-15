@@ -53,9 +53,14 @@ func NewAssessmentHandler(db *gorm.DB, cfg *config.Config, logger zerolog.Logger
 
 // ExtractFromImagesRequest represents the request for image extraction
 type ExtractFromImagesRequest struct {
-	Images []string `json:"images" binding:"required"`
-	Source string   `json:"source,omitempty"` // "grok" or "deepseek"
+	Images []string `json:"images" binding:"required,max=10"` // Max 10 images
+	Source string   `json:"source,omitempty"`                 // "grok" or "deepseek"
 }
+
+const (
+	maxImageCount     = 10
+	maxImageSizeBytes = 10 * 1024 * 1024 // 10 MB per image (base64)
+)
 
 // ExtractFromImages extracts stock data from uploaded images
 func (h *AssessmentHandler) ExtractFromImages(c *gin.Context) {
@@ -63,6 +68,20 @@ func (h *AssessmentHandler) ExtractFromImages(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Validate image count
+	if len(req.Images) > maxImageCount {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Maximum %d images allowed", maxImageCount)})
+		return
+	}
+
+	// Validate individual image sizes
+	for i, img := range req.Images {
+		if len(img) > maxImageSizeBytes {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Image %d exceeds maximum size of 10 MB", i+1)})
+			return
+		}
 	}
 
 	h.logger.Info().Int("image_count", len(req.Images)).Str("source", req.Source).Msg("Processing images for stock extraction")
