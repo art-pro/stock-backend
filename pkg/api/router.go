@@ -159,6 +159,8 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 		// User Settings routes
 		protected.GET("/settings/columns", settingsHandler.GetColumnSettings)
 		protected.POST("/settings/columns", settingsHandler.SaveColumnSettings)
+		protected.GET("/settings/sector-targets", settingsHandler.GetSectorTargets)
+		protected.POST("/settings/sector-targets", settingsHandler.SaveSectorTargets)
 	}
 
 	// Large payload routes (image uploads) with 100MB limit

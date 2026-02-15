@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/art-pro/stock-backend/pkg/models"
@@ -86,6 +87,97 @@ func (h *SettingsHandler) SaveColumnSettings(c *gin.Context) {
 		}
 	} else {
 		h.logger.Error().Err(err).Msg("Failed to check existing settings")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "saved"})
+}
+
+const sectorTargetsKey = "sector_targets"
+
+// SectorTargetRow is one row of the sector targets table (sector or Cash).
+type SectorTargetRow struct {
+	Sector   string `json:"sector" binding:"required"`
+	Min      int    `json:"min" binding:"required"`
+	Max      int    `json:"max" binding:"required"`
+	Rationale string `json:"rationale"`
+}
+
+// SectorTargetsPayload is the request/response for sector targets.
+type SectorTargetsPayload struct {
+	Rows []SectorTargetRow `json:"rows" binding:"required"`
+}
+
+func (h *SettingsHandler) GetSectorTargets(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User ID not found in context"})
+		return
+	}
+	uid := userID.(uint)
+
+	var setting models.UserSettings
+	if err := h.db.Where("user_id = ? AND key = ?", uid, sectorTargetsKey).First(&setting).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusOK, gin.H{"rows": nil})
+			return
+		}
+		h.logger.Error().Err(err).Msg("Failed to fetch sector targets")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch settings"})
+		return
+	}
+
+	c.Data(http.StatusOK, "application/json", []byte(setting.Value))
+}
+
+func (h *SettingsHandler) SaveSectorTargets(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User ID not found in context"})
+		return
+	}
+	uid := userID.(uint)
+
+	var req SectorTargetsPayload
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(req.Rows) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "rows required"})
+		return
+	}
+
+	jsonBytes, marshalErr := json.Marshal(req)
+	if marshalErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to serialize"})
+		return
+	}
+	value := string(jsonBytes)
+
+	var setting models.UserSettings
+	err := h.db.Where("user_id = ? AND key = ?", uid, sectorTargetsKey).First(&setting).Error
+	if err == gorm.ErrRecordNotFound {
+		setting = models.UserSettings{
+			UserID: uid,
+			Key:    sectorTargetsKey,
+			Value:  value,
+		}
+		if err := h.db.Create(&setting).Error; err != nil {
+			h.logger.Error().Err(err).Msg("Failed to create sector targets")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save settings"})
+			return
+		}
+	} else if err == nil {
+		setting.Value = value
+		if err := h.db.Save(&setting).Error; err != nil {
+			h.logger.Error().Err(err).Msg("Failed to update sector targets")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save settings"})
+			return
+		}
+	} else {
+		h.logger.Error().Err(err).Msg("Failed to check sector targets")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}

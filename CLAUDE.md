@@ -230,7 +230,9 @@ Protected (`/api`, JWT):
 - FX: list, refresh, add/update/delete currency
 - Cash: list/create/update/delete + refresh USD values
 - Assessment: request, vision extraction, recent/history
-- User settings: table column configuration
+- User settings: table column configuration; **sector allocation targets** (persistent per user):
+  - `GET /settings/sector-targets` – returns `{ "rows": [ { "sector", "min", "max", "rationale" }, ... ] }` or `{ "rows": null }` if none saved. Stored in `UserSettings` with key `sector_targets`.
+  - `POST /settings/sector-targets` – body `{ "rows": [...] }`; creates or updates the user’s sector targets (equity sectors + Cash). Used by frontend for rebalance hints and sector headers.
 
 ## Scheduler Responsibilities
 
@@ -357,6 +359,10 @@ Update behavior:
 - Set stock fair value to median of accepted entries.
 - Update `FairValueSource` as trusted multi-source consensus metadata.
 - Recalculate EV/Kelly/assessment and persist stock + `StockHistory` snapshot in one transaction.
+
+## Tests
+
+- **`pkg/api/handlers/settings_handler_test.go`** – Sector targets: `GetSectorTargets` when no record (returns `rows: null`), `SaveSectorTargets` then GET roundtrip, empty rows returns 400, missing `user_id` returns 401. Uses in-memory SQLite and test user.
 
 ## Quick Runbook
 
