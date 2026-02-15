@@ -51,4 +51,5 @@ Thumbs.db
 .vercel
 
 # local AI/context docs
+CLAUDE.md
 stock-frontend/CLAUDE.md

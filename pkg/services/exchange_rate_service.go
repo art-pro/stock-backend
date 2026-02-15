@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,9 +16,10 @@ import (
 
 // ExchangeRateService handles exchange rate operations
 type ExchangeRateService struct {
-	db     *gorm.DB
-	logger zerolog.Logger
-	apiKey string
+	db         *gorm.DB
+	logger     zerolog.Logger
+	apiKey     string
+	httpClient *http.Client
 }
 
 // NewExchangeRateService creates a new exchange rate service
@@ -32,6 +34,9 @@ func NewExchangeRateService(db *gorm.DB, logger zerolog.Logger) *ExchangeRateSer
 		db:     db,
 		logger: logger,
 		apiKey: apiKey,
+		httpClient: &http.Client{
+			Timeout: 15 * time.Second,
+		},
 	}
 }
 
@@ -58,12 +63,27 @@ func (s *ExchangeRateService) FetchLatestRates() error {
 	// Construct API URL
 	url := fmt.Sprintf("https://v6.exchangerate-api.com/v6/%s/latest/EUR", s.apiKey)
 
-	// Make HTTP request
-	resp, err := http.Get(url)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to build exchange rate request: %w", err)
+	}
+
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to fetch exchange rates: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			s.logger.Warn().Err(cerr).Msg("Failed to close exchange rate response body")
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("exchange rate API returned status %d", resp.StatusCode)
+	}
 
 	// Read response body
 	body, err := io.ReadAll(resp.Body)

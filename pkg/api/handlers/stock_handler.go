@@ -262,8 +262,58 @@ func (h *StockHandler) UpdateStock(c *gin.Context) {
 		return
 	}
 
+	allowedFields := map[string]struct{}{
+		"ticker":                 {},
+		"company_name":           {},
+		"isin":                   {},
+		"sector":                 {},
+		"current_price":          {},
+		"currency":               {},
+		"fair_value":             {},
+		"upside_potential":       {},
+		"downside_risk":          {},
+		"probability_positive":   {},
+		"expected_value":         {},
+		"beta":                   {},
+		"volatility":             {},
+		"pe_ratio":               {},
+		"eps_growth_rate":        {},
+		"debt_to_ebitda":         {},
+		"dividend_yield":         {},
+		"b_ratio":                {},
+		"kelly_fraction":         {},
+		"half_kelly_suggested":   {},
+		"shares_owned":           {},
+		"avg_price_local":        {},
+		"buy_zone_min":           {},
+		"buy_zone_max":           {},
+		"buy_zone_status":        {},
+		"sell_zone_lower_bound":  {},
+		"sell_zone_upper_bound":  {},
+		"sell_zone_status":       {},
+		"assessment":             {},
+		"update_frequency":       {},
+		"data_source":            {},
+		"fair_value_source":      {},
+		"comment":                {},
+		"alpha_vantage_raw_json": {},
+		"grok_raw_json":          {},
+	}
+
+	sanitized := make(map[string]interface{})
+	for key, value := range req {
+		if _, ok := allowedFields[key]; ok {
+			sanitized[key] = value
+		}
+	}
+
+	if len(sanitized) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No valid fields to update"})
+		return
+	}
+
 	// Update allowed fields
-	if err := h.db.Model(&stock).Updates(req).Error; err != nil {
+	if err := h.db.Model(&stock).Updates(sanitized).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to update stock")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update stock"})
 		return

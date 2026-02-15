@@ -29,6 +29,17 @@ func NewCashHandler(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *Cas
 	}
 }
 
+func (h *CashHandler) resolvePortfolioID(c *gin.Context) (uint, error) {
+	if portfolioIDParam := c.Query("portfolio_id"); portfolioIDParam != "" {
+		parsed, err := strconv.ParseUint(portfolioIDParam, 10, 32)
+		if err != nil {
+			return 0, err
+		}
+		return uint(parsed), nil
+	}
+	return database.GetDefaultPortfolioID(h.db)
+}
+
 // CreateCashHoldingRequest represents the request to create a cash holding
 type CreateCashHoldingRequest struct {
 	CurrencyCode string  `json:"currency_code" binding:"required"`
@@ -44,8 +55,14 @@ type UpdateCashHoldingRequest struct {
 
 // GetAllCashHoldings returns all cash holdings with USD values calculated
 func (h *CashHandler) GetAllCashHoldings(c *gin.Context) {
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
 	var cashHoldings []models.CashHolding
-	if err := h.db.Find(&cashHoldings).Error; err != nil {
+	if err := h.db.Where("portfolio_id = ?", portfolioID).Find(&cashHoldings).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to fetch cash holdings")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch cash holdings"})
 		return
@@ -78,6 +95,12 @@ func (h *CashHandler) CreateCashHolding(c *gin.Context) {
 		return
 	}
 
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
 	// Check if currency exists in exchange rates
 	var exchangeRate models.ExchangeRate
 	if err := h.db.Where("currency_code = ?", req.CurrencyCode).First(&exchangeRate).Error; err != nil {
@@ -87,7 +110,7 @@ func (h *CashHandler) CreateCashHolding(c *gin.Context) {
 
 	// Check if cash holding already exists for this currency
 	var existingCash models.CashHolding
-	if err := h.db.Where("currency_code = ?", req.CurrencyCode).First(&existingCash).Error; err == nil {
+	if err := h.db.Where("currency_code = ? AND portfolio_id = ?", req.CurrencyCode, portfolioID).First(&existingCash).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "Cash holding already exists for this currency. Use update instead."})
 		return
 	}
@@ -97,13 +120,6 @@ func (h *CashHandler) CreateCashHolding(c *gin.Context) {
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to calculate USD value")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate USD value"})
-		return
-	}
-
-	portfolioID, err := database.GetDefaultPortfolioID(h.db)
-	if err != nil {
-		h.logger.Error().Err(err).Msg("Failed to resolve default portfolio")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "No default portfolio found"})
 		return
 	}
 
@@ -134,6 +150,12 @@ func (h *CashHandler) UpdateCashHolding(c *gin.Context) {
 		return
 	}
 
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
 	var req UpdateCashHoldingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
@@ -141,7 +163,7 @@ func (h *CashHandler) UpdateCashHolding(c *gin.Context) {
 	}
 
 	var cashHolding models.CashHolding
-	if err := h.db.First(&cashHolding, id).Error; err != nil {
+	if err := h.db.Where("id = ? AND portfolio_id = ?", id, portfolioID).First(&cashHolding).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Cash holding not found"})
 			return
@@ -182,8 +204,14 @@ func (h *CashHandler) DeleteCashHolding(c *gin.Context) {
 		return
 	}
 
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
 	var cashHolding models.CashHolding
-	if err := h.db.First(&cashHolding, id).Error; err != nil {
+	if err := h.db.Where("id = ? AND portfolio_id = ?", id, portfolioID).First(&cashHolding).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Cash holding not found"})
 			return
@@ -205,8 +233,14 @@ func (h *CashHandler) DeleteCashHolding(c *gin.Context) {
 
 // RefreshUSDValues recalculates USD values for all cash holdings
 func (h *CashHandler) RefreshUSDValues(c *gin.Context) {
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
 	var cashHoldings []models.CashHolding
-	if err := h.db.Find(&cashHoldings).Error; err != nil {
+	if err := h.db.Where("portfolio_id = ?", portfolioID).Find(&cashHoldings).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to fetch cash holdings")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch cash holdings"})
 		return

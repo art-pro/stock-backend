@@ -209,7 +209,7 @@ Calculate ALL fields using the formulas provided. Return ONLY the JSON object.`,
 		fmt.Printf("Grok API: no response received\n")
 		return s.mockStockData(stock)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		fmt.Printf("Grok API returned status: %d\n", resp.StatusCode)
@@ -374,7 +374,7 @@ func (s *ExternalAPIService) FetchExchangeRate(fromCurrency string) (float64, er
 	if err != nil {
 		return 1.0, fmt.Errorf("failed to fetch exchange rate: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {

@@ -176,6 +176,7 @@ Typical path for create/update/scheduler refresh:
 Implemented in `pkg/services/exchange_rate_service.go`.
 
 - API source: ExchangeRate-API (`latest/EUR`)
+- HTTP client uses request timeouts and fails fast on non-200 responses to avoid hanging refreshes
 - Supports tracked currencies in DB (`ExchangeRate` table)
 - Manual rates (`IsManual`) are preserved on refresh
 - Soft-delete for currencies (`IsActive=false`)
@@ -194,9 +195,10 @@ Implemented in `pkg/services/exchange_rate_service.go`.
 - Many stock/portfolio/alert endpoints resolve `portfolio_id` from query param.
 - If absent, backend falls back to default portfolio via `database.GetDefaultPortfolioID`.
 - Scoping exists on key stock operations, export/history/deleted stocks, alerts, and summary.
+- Cash endpoints now resolve `portfolio_id` (query param or default) for reads/writes to avoid cross-portfolio access.
 
 ### Known consistency gap
-- Not all handlers are fully scoped (for example, some cash and assessment context paths fetch broadly).
+- Not all handlers are fully scoped (assessment context paths fetch broadly).
 - When extending features, include `portfolio_id` scoping by default.
 
 ## Transactional Integrity Rules
@@ -287,6 +289,8 @@ Primary variables:
 4. Prefer explicit failure to silent fallback for financial-critical computations.
 5. Keep DB writes atomic when state spans multiple tables.
 6. Update tests whenever formulas, thresholds, or unit semantics change.
+7. Mutable endpoints are allow-listed (stock update, portfolio settings); extend the allow list explicitly when adding new editable fields to avoid mass assignment.
+8. JWT validation rejects unexpected signing methods; continue issuing HS256 tokens with the shared secret.
 
 ## Trusted Fair Value Collection (New in v2.6.0)
 
@@ -322,4 +326,4 @@ Update behavior:
 
 ---
 
-Last updated: 2026-02-11
+Last updated: 2026-02-15

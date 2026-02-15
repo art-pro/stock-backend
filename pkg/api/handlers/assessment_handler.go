@@ -195,7 +195,7 @@ func (h *AssessmentHandler) extractWithGrokVision(images []string, prompt string
 	if err != nil {
 		return "", fmt.Errorf("failed to call Grok API: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -293,7 +293,7 @@ func (h *AssessmentHandler) extractWithDeepseekVision(images []string, prompt st
 	if err != nil {
 		return "", fmt.Errorf("failed to call Deepseek API: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -477,7 +477,7 @@ func (h *AssessmentHandler) generateGrokAssessment(ticker, companyName string, c
 	if err != nil {
 		return "", fmt.Errorf("failed to call Grok API: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -566,7 +566,7 @@ func (h *AssessmentHandler) generateDeepseekAssessment(ticker, companyName strin
 	if err != nil {
 		return "", fmt.Errorf("failed to call Deepseek API: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

@@ -168,7 +168,7 @@ func (c *FairValueCollector) callLLM(ctx context.Context, endpoint, apiKey strin
 	if err != nil {
 		return nil, fmt.Errorf("call provider: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

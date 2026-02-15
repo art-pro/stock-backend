@@ -137,12 +137,12 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 		"summary": metrics,
 		"stocks":  stocks,
 		"units": gin.H{
-			"summary_total_value":   "EUR",
-			"summary_ev":            "percent",
-			"summary_volatility":    "percent",
-			"stock_current_value":   "USD",
-			"stock_weight":          "percent",
-			"exchange_rate_base":    "EUR",
+			"summary_total_value":    "EUR",
+			"summary_ev":             "percent",
+			"summary_volatility":     "percent",
+			"stock_current_value":    "USD",
+			"stock_weight":           "percent",
+			"exchange_rate_base":     "EUR",
 			"exchange_rate_semantic": "currency_per_1_EUR",
 		},
 	})
@@ -243,6 +243,25 @@ func (h *PortfolioHandler) UpdateSettings(c *gin.Context) {
 		return
 	}
 
+	allowedFields := map[string]struct{}{
+		"update_frequency":      {},
+		"alerts_enabled":        {},
+		"alert_threshold_ev":    {},
+		"total_portfolio_value": {},
+	}
+
+	sanitized := make(map[string]interface{})
+	for key, value := range req {
+		if _, ok := allowedFields[key]; ok {
+			sanitized[key] = value
+		}
+	}
+
+	if len(sanitized) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No valid fields to update"})
+		return
+	}
+
 	portfolioID, err := database.GetDefaultPortfolioID(h.db)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to resolve default portfolio")
@@ -262,7 +281,7 @@ func (h *PortfolioHandler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	if err := h.db.Model(&settings).Updates(req).Error; err != nil {
+	if err := h.db.Model(&settings).Updates(sanitized).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to update settings")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update settings"})
 		return

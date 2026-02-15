@@ -162,7 +162,7 @@ func (s *ExternalAPIService) FetchAlphaVantageQuote(ticker string) (*AlphaVantag
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch quote: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Check for rate limit (Alpha Vantage returns 200 with error message)
 	if resp.StatusCode != http.StatusOK {
@@ -225,7 +225,7 @@ func (s *ExternalAPIService) FetchAlphaVantageOverview(ticker string) (*AlphaVan
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch overview: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Check for rate limit
 	if resp.StatusCode != http.StatusOK {
@@ -518,7 +518,7 @@ VERIFY: Current price must be LOWER than fair value if upside is positive. Use r
 		fmt.Printf("Grok API: no response received\n")
 		return s.mockStockData(stock)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		fmt.Printf("Grok API returned status: %d\n", resp.StatusCode)
@@ -693,7 +693,7 @@ func (s *ExternalAPIService) FetchExchangeRate(fromCurrency string) (float64, er
 	if err != nil {
 		return 1.0, fmt.Errorf("failed to fetch exchange rate: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -903,7 +903,7 @@ Return ONLY valid JSON (no markdown, no extra text):
 	if err != nil {
 		return fmt.Errorf("failed to call Grok API: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

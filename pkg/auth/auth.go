@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -18,7 +19,7 @@ type Claims struct {
 // GenerateToken generates a JWT token for the user
 func GenerateToken(userID uint, username, secret string) (string, error) {
 	expirationTime := time.Now().Add(24 * time.Hour)
-	
+
 	claims := &Claims{
 		Username: username,
 		UserID:   userID,
@@ -37,6 +38,9 @@ func ValidateToken(tokenString, secret string) (*Claims, error) {
 	claims := &Claims{}
 
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
 		return []byte(secret), nil
 	})
 
@@ -64,4 +68,3 @@ func HashPassword(password string) (string, error) {
 func CheckPassword(hashedPassword, password string) error {
 	return bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
 }
-
