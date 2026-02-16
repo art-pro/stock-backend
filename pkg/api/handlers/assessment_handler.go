@@ -413,21 +413,15 @@ func (h *AssessmentHandler) RequestAssessment(c *gin.Context) {
 		return
 	}
 
-	// Save assessment to database for history
-	assessmentRecord := models.Assessment{
-		Ticker:     req.Ticker,
-		Source:     req.Source,
-		Assessment: assessment,
-		Status:     "completed",
-		CreatedAt:  time.Now(),
-	}
-
-	if err := h.db.Create(&assessmentRecord).Error; err != nil {
-		h.logger.Error().Err(err).Msg("Failed to save assessment to database")
-		// Continue anyway - don't fail the request if we can't save to DB
+	// Persist one latest assessment per ticker+source (replace old with new).
+	if err := h.upsertAssessment(req.Ticker, req.Source, assessment); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to persist assessment")
+		// Continue anyway - don't fail the request if DB persistence fails
 	} else {
-		// Clean up old assessments to keep only the most recent 20
-		h.cleanupOldAssessments()
+		// Rebuild and persist diff whenever a new source assessment is saved.
+		if err := h.regenerateAndPersistAssessmentDiff(req.Ticker); err != nil {
+			h.logger.Warn().Err(err).Str("ticker", req.Ticker).Msg("Failed to regenerate persisted assessment diff")
+		}
 	}
 
 	c.JSON(http.StatusOK, AssessmentResponse{
@@ -488,6 +482,35 @@ func (h *AssessmentHandler) GetAssessmentsByTicker(c *gin.Context) {
 	c.JSON(http.StatusOK, assessments)
 }
 
+// GetAssessmentDiffByTicker returns the latest persisted Grok-vs-Deepseek diff for a ticker.
+func (h *AssessmentHandler) GetAssessmentDiffByTicker(c *gin.Context) {
+	ticker := strings.ToUpper(strings.TrimSpace(c.Param("ticker")))
+	if ticker == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Ticker is required"})
+		return
+	}
+
+	var diff models.AssessmentDiff
+	if err := h.db.Where("ticker = ?", ticker).First(&diff).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusOK, gin.H{"rows": []AssessmentCompareRow{}})
+			return
+		}
+		h.logger.Error().Err(err).Str("ticker", ticker).Msg("Failed to fetch assessment diff by ticker")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch assessment diff"})
+		return
+	}
+
+	var rows []AssessmentCompareRow
+	if err := json.Unmarshal([]byte(diff.RowsJSON), &rows); err != nil {
+		h.logger.Error().Err(err).Str("ticker", ticker).Msg("Failed to parse persisted assessment diff")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse assessment diff"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"rows": rows})
+}
+
 // CompareAssessments extracts comparable fields from Grok and Deepseek summaries.
 func (h *AssessmentHandler) CompareAssessments(c *gin.Context) {
 	var req AssessmentCompareRequest
@@ -496,138 +519,18 @@ func (h *AssessmentHandler) CompareAssessments(c *gin.Context) {
 		return
 	}
 
-	source := "grok"
-	if h.cfg.XAIAPIKey == "" && h.cfg.DeepseekAPIKey != "" {
-		source = "deepseek"
-	}
-	if h.cfg.XAIAPIKey == "" && h.cfg.DeepseekAPIKey == "" {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No LLM API key configured"})
-		return
-	}
-
-	fieldSpec := []struct {
-		Key   string
-		Label string
-	}{
-		{"current_price", "Current Price"},
-		{"fair_value_estimate", "Fair Value Estimate"},
-		{"upside_potential", "Upside Potential"},
-		{"beta", "Beta"},
-		{"downside_risk", "Downside Risk (D)"},
-		{"probability_positive", "Probability of Positive Outcome (p)"},
-		{"volatility", "Volatility (σ)"},
-		{"forward_pe_ratio", "Forward P/E Ratio"},
-		{"eps_growth", "EPS Growth"},
-		{"debt_to_ebitda_ttm", "Debt-to-EBITDA (TTM)"},
-		{"dividend_yield", "Dividend Yield"},
-		{"expected_value_calculation", "Expected Value (EV) Calculation"},
-		{"kelly_criterion_sizing", "Kelly Criterion Sizing"},
-		{"buy_zone", "Buy Zone"},
-		{"final_assessment", "Final Assessment"},
-	}
-
-	systemContent := "You are a financial data extraction assistant. Extract only values explicitly present in text. If a field is absent, return 'N/A'. For final assessment return only ADD, SELL, or HOLD if clearly stated, otherwise N/A."
-	userContent := fmt.Sprintf(`Extract the requested fields from two stock assessment summaries for ticker %s.
-
-Return STRICT JSON with this exact shape:
-{
-  "grok": {
-    "current_price": "...",
-    "fair_value_estimate": "...",
-    "upside_potential": "...",
-    "beta": "...",
-    "downside_risk": "...",
-    "probability_positive": "...",
-    "volatility": "...",
-    "forward_pe_ratio": "...",
-    "eps_growth": "...",
-    "debt_to_ebitda_ttm": "...",
-    "dividend_yield": "...",
-    "expected_value_calculation": "...",
-    "kelly_criterion_sizing": "...",
-    "buy_zone": "...",
-    "final_assessment": "ADD|SELL|HOLD|N/A"
-  },
-  "deepseek": {
-    "current_price": "...",
-    "fair_value_estimate": "...",
-    "upside_potential": "...",
-    "beta": "...",
-    "downside_risk": "...",
-    "probability_positive": "...",
-    "volatility": "...",
-    "forward_pe_ratio": "...",
-    "eps_growth": "...",
-    "debt_to_ebitda_ttm": "...",
-    "dividend_yield": "...",
-    "expected_value_calculation": "...",
-    "kelly_criterion_sizing": "...",
-    "buy_zone": "...",
-    "final_assessment": "ADD|SELL|HOLD|N/A"
-  }
-}
-
-Rules:
-- Keep values compact and human-readable.
-- Preserve units/percent signs if present.
-- Do not invent missing data.
-- Output raw JSON only, no markdown.
-
-GROK SUMMARY:
-%s
-
-DEEPSEEK SUMMARY:
-%s
-`, strings.ToUpper(strings.TrimSpace(req.Ticker)), req.GrokAssessment, req.DeepseekAssessment)
-
-	content, err := h.callChatCompletion(systemContent, userContent, source)
+	ticker := strings.ToUpper(strings.TrimSpace(req.Ticker))
+	rows, err := h.extractAssessmentCompareRows(ticker, req.GrokAssessment, req.DeepseekAssessment)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to compare assessments: " + err.Error()})
 		return
 	}
 
-	content = strings.TrimSpace(content)
-	if strings.HasPrefix(content, "```json") {
-		content = strings.TrimPrefix(content, "```json")
-		content = strings.TrimSuffix(content, "```")
-	} else if strings.HasPrefix(content, "```") {
-		content = strings.TrimPrefix(content, "```")
-		content = strings.TrimSuffix(content, "```")
-	}
-	content = strings.TrimSpace(content)
-
-	var parsed assessmentCompareLLMResult
-	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
-		h.logger.Error().Err(err).Str("content", content).Msg("Failed to parse assessment comparison JSON")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse comparison output"})
-		return
+	if err := h.persistAssessmentDiff(ticker, rows); err != nil {
+		h.logger.Warn().Err(err).Str("ticker", ticker).Msg("Failed to persist assessment diff from compare endpoint")
 	}
 
-	rows := make([]AssessmentCompareRow, 0, len(fieldSpec))
-	for _, f := range fieldSpec {
-		grokValue := "N/A"
-		deepseekValue := "N/A"
-		if parsed.Grok != nil {
-			if value := strings.TrimSpace(parsed.Grok[f.Key]); value != "" {
-				grokValue = value
-			}
-		}
-		if parsed.Deepseek != nil {
-			if value := strings.TrimSpace(parsed.Deepseek[f.Key]); value != "" {
-				deepseekValue = value
-			}
-		}
-		rows = append(rows, AssessmentCompareRow{
-			Key:      f.Key,
-			Label:    f.Label,
-			Grok:     grokValue,
-			Deepseek: deepseekValue,
-		})
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"rows": rows,
-	})
+	c.JSON(http.StatusOK, gin.H{"rows": rows})
 }
 
 // GetAssessmentById returns a specific assessment by ID
@@ -1384,6 +1287,227 @@ Please provide a detailed assessment for %s following the template format simila
 Use real market data and provide specific numbers for all calculations. Be conservative with probability estimates and avoid hype.
 
 %s`, currentDate, stockInfo, ticker, ticker, portfolioContext)
+}
+
+func assessmentCompareFieldSpec() []struct {
+	Key   string
+	Label string
+} {
+	return []struct {
+		Key   string
+		Label string
+	}{
+		{"current_price", "Current Price"},
+		{"fair_value_estimate", "Fair Value Estimate"},
+		{"upside_potential", "Upside Potential"},
+		{"beta", "Beta"},
+		{"downside_risk", "Downside Risk (D)"},
+		{"probability_positive", "Probability of Positive Outcome (p)"},
+		{"volatility", "Volatility (σ)"},
+		{"forward_pe_ratio", "Forward P/E Ratio"},
+		{"eps_growth", "EPS Growth"},
+		{"debt_to_ebitda_ttm", "Debt-to-EBITDA (TTM)"},
+		{"dividend_yield", "Dividend Yield"},
+		{"expected_value_calculation", "Expected Value (EV) Calculation"},
+		{"kelly_criterion_sizing", "Kelly Criterion Sizing"},
+		{"buy_zone", "Buy Zone"},
+		{"final_assessment", "Final Assessment"},
+	}
+}
+
+func (h *AssessmentHandler) upsertAssessment(ticker, source, text string) error {
+	ticker = strings.ToUpper(strings.TrimSpace(ticker))
+	source = strings.ToLower(strings.TrimSpace(source))
+
+	var existing models.Assessment
+	err := h.db.Where("ticker = ? AND source = ?", ticker, source).First(&existing).Error
+	if err == nil {
+		if updateErr := h.db.Model(&existing).Updates(map[string]interface{}{
+			"assessment": text,
+			"status":     "completed",
+			"updated_at": time.Now(),
+		}).Error; updateErr != nil {
+			return updateErr
+		}
+		// Clean up any legacy duplicates from older behavior.
+		return h.db.Where("ticker = ? AND source = ? AND id <> ?", ticker, source, existing.ID).Delete(&models.Assessment{}).Error
+	}
+	if err != gorm.ErrRecordNotFound {
+		return err
+	}
+
+	record := models.Assessment{
+		Ticker:     ticker,
+		Source:     source,
+		Assessment: text,
+		Status:     "completed",
+		CreatedAt:  time.Now(),
+	}
+	return h.db.Create(&record).Error
+}
+
+func (h *AssessmentHandler) extractAssessmentCompareRows(ticker, grokAssessment, deepseekAssessment string) ([]AssessmentCompareRow, error) {
+	source := "grok"
+	if h.cfg.XAIAPIKey == "" && h.cfg.DeepseekAPIKey != "" {
+		source = "deepseek"
+	}
+	if h.cfg.XAIAPIKey == "" && h.cfg.DeepseekAPIKey == "" {
+		return nil, fmt.Errorf("No LLM API key configured")
+	}
+
+	systemContent := "You are a financial data extraction assistant. Extract only values explicitly present in text. If a field is absent, return 'N/A'. For final assessment return only ADD, SELL, or HOLD if clearly stated, otherwise N/A."
+	userContent := fmt.Sprintf(`Extract the requested fields from two stock assessment summaries for ticker %s.
+
+Return STRICT JSON with this exact shape:
+{
+  "grok": {
+    "current_price": "...",
+    "fair_value_estimate": "...",
+    "upside_potential": "...",
+    "beta": "...",
+    "downside_risk": "...",
+    "probability_positive": "...",
+    "volatility": "...",
+    "forward_pe_ratio": "...",
+    "eps_growth": "...",
+    "debt_to_ebitda_ttm": "...",
+    "dividend_yield": "...",
+    "expected_value_calculation": "...",
+    "kelly_criterion_sizing": "...",
+    "buy_zone": "...",
+    "final_assessment": "ADD|SELL|HOLD|N/A"
+  },
+  "deepseek": {
+    "current_price": "...",
+    "fair_value_estimate": "...",
+    "upside_potential": "...",
+    "beta": "...",
+    "downside_risk": "...",
+    "probability_positive": "...",
+    "volatility": "...",
+    "forward_pe_ratio": "...",
+    "eps_growth": "...",
+    "debt_to_ebitda_ttm": "...",
+    "dividend_yield": "...",
+    "expected_value_calculation": "...",
+    "kelly_criterion_sizing": "...",
+    "buy_zone": "...",
+    "final_assessment": "ADD|SELL|HOLD|N/A"
+  }
+}
+
+Rules:
+- Keep values compact and human-readable.
+- Preserve units/percent signs if present.
+- Do not invent missing data.
+- Output raw JSON only, no markdown.
+
+GROK SUMMARY:
+%s
+
+DEEPSEEK SUMMARY:
+%s
+`, ticker, grokAssessment, deepseekAssessment)
+
+	content, err := h.callChatCompletion(systemContent, userContent, source)
+	if err != nil {
+		return nil, err
+	}
+
+	content = strings.TrimSpace(content)
+	if strings.HasPrefix(content, "```json") {
+		content = strings.TrimPrefix(content, "```json")
+		content = strings.TrimSuffix(content, "```")
+	} else if strings.HasPrefix(content, "```") {
+		content = strings.TrimPrefix(content, "```")
+		content = strings.TrimSuffix(content, "```")
+	}
+	content = strings.TrimSpace(content)
+
+	var parsed assessmentCompareLLMResult
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		h.logger.Error().Err(err).Str("content", content).Msg("Failed to parse assessment comparison JSON")
+		return nil, fmt.Errorf("Failed to parse comparison output")
+	}
+
+	fieldSpec := assessmentCompareFieldSpec()
+	rows := make([]AssessmentCompareRow, 0, len(fieldSpec))
+	for _, f := range fieldSpec {
+		grokValue := "N/A"
+		deepseekValue := "N/A"
+		if parsed.Grok != nil {
+			if value := strings.TrimSpace(parsed.Grok[f.Key]); value != "" {
+				grokValue = value
+			}
+		}
+		if parsed.Deepseek != nil {
+			if value := strings.TrimSpace(parsed.Deepseek[f.Key]); value != "" {
+				deepseekValue = value
+			}
+		}
+		rows = append(rows, AssessmentCompareRow{
+			Key:      f.Key,
+			Label:    f.Label,
+			Grok:     grokValue,
+			Deepseek: deepseekValue,
+		})
+	}
+
+	return rows, nil
+}
+
+func (h *AssessmentHandler) persistAssessmentDiff(ticker string, rows []AssessmentCompareRow) error {
+	payload, err := json.Marshal(rows)
+	if err != nil {
+		return err
+	}
+
+	var existing models.AssessmentDiff
+	err = h.db.Where("ticker = ?", ticker).First(&existing).Error
+	if err == nil {
+		return h.db.Model(&existing).Updates(map[string]interface{}{
+			"rows_json":  string(payload),
+			"updated_at": time.Now(),
+		}).Error
+	}
+	if err != gorm.ErrRecordNotFound {
+		return err
+	}
+
+	record := models.AssessmentDiff{
+		Ticker:   ticker,
+		RowsJSON: string(payload),
+	}
+	return h.db.Create(&record).Error
+}
+
+func (h *AssessmentHandler) regenerateAndPersistAssessmentDiff(ticker string) error {
+	ticker = strings.ToUpper(strings.TrimSpace(ticker))
+	var records []models.Assessment
+	if err := h.db.Where("ticker = ? AND source IN ? AND status = ?", ticker, []string{"grok", "deepseek"}, "completed").Find(&records).Error; err != nil {
+		return err
+	}
+
+	var grokText string
+	var deepseekText string
+	for _, record := range records {
+		switch strings.ToLower(record.Source) {
+		case "grok":
+			grokText = record.Assessment
+		case "deepseek":
+			deepseekText = record.Assessment
+		}
+	}
+
+	if strings.TrimSpace(grokText) == "" || strings.TrimSpace(deepseekText) == "" {
+		return nil
+	}
+
+	rows, err := h.extractAssessmentCompareRows(ticker, grokText, deepseekText)
+	if err != nil {
+		return err
+	}
+	return h.persistAssessmentDiff(ticker, rows)
 }
 
 // cleanupOldAssessments removes assessments beyond the most recent 20

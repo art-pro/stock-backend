@@ -156,6 +156,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 		protected.POST("/assessment/compare", assessmentHandler.CompareAssessments)
 		protected.GET("/assessment/recent", assessmentHandler.GetRecentAssessments)
 		protected.GET("/assessment/ticker/:ticker", assessmentHandler.GetAssessmentsByTicker)
+		protected.GET("/assessment/ticker/:ticker/diff", assessmentHandler.GetAssessmentDiffByTicker)
 		protected.GET("/assessment/:id", assessmentHandler.GetAssessmentById)
 
 		// User Settings routes
