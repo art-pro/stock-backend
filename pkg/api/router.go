@@ -154,6 +154,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 		protected.POST("/assessment/explain", assessmentHandler.ExplainAssessment)
 		protected.POST("/assessment/sector-summary", assessmentHandler.SectorSummary)
 		protected.GET("/assessment/recent", assessmentHandler.GetRecentAssessments)
+		protected.GET("/assessment/ticker/:ticker", assessmentHandler.GetAssessmentsByTicker)
 		protected.GET("/assessment/:id", assessmentHandler.GetAssessmentById)
 
 		// User Settings routes

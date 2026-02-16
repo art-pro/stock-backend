@@ -431,6 +431,45 @@ func (h *AssessmentHandler) GetRecentAssessments(c *gin.Context) {
 	c.JSON(http.StatusOK, assessments)
 }
 
+// GetAssessmentsByTicker returns saved assessments for a ticker (optionally filtered by source).
+func (h *AssessmentHandler) GetAssessmentsByTicker(c *gin.Context) {
+	ticker := strings.ToUpper(strings.TrimSpace(c.Param("ticker")))
+	if ticker == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Ticker is required"})
+		return
+	}
+
+	source := strings.ToLower(strings.TrimSpace(c.Query("source")))
+	if source != "" && source != "grok" && source != "deepseek" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid source. Must be 'grok' or 'deepseek'"})
+		return
+	}
+
+	limit := 50
+	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
+		parsedLimit, err := strconv.Atoi(rawLimit)
+		if err != nil || parsedLimit <= 0 || parsedLimit > 200 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be an integer between 1 and 200"})
+			return
+		}
+		limit = parsedLimit
+	}
+
+	query := h.db.Where("ticker = ?", ticker).Order("created_at DESC").Limit(limit)
+	if source != "" {
+		query = query.Where("source = ?", source)
+	}
+
+	var assessments []models.Assessment
+	if err := query.Find(&assessments).Error; err != nil {
+		h.logger.Error().Err(err).Str("ticker", ticker).Msg("Failed to fetch assessments by ticker")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch assessments"})
+		return
+	}
+
+	c.JSON(http.StatusOK, assessments)
+}
+
 // GetAssessmentById returns a specific assessment by ID
 func (h *AssessmentHandler) GetAssessmentById(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
