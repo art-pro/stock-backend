@@ -417,12 +417,13 @@ func (h *AssessmentHandler) RequestAssessment(c *gin.Context) {
 	// Persist one latest assessment per ticker+source (replace old with new).
 	if err := h.upsertAssessment(req.Ticker, req.Source, assessment); err != nil {
 		h.logger.Error().Err(err).Msg("Failed to persist assessment")
-		// Continue anyway - don't fail the request if DB persistence fails
-	} else {
-		// Rebuild and persist diff whenever a new source assessment is saved.
-		if err := h.regenerateAndPersistAssessmentDiff(req.Ticker); err != nil {
-			h.logger.Warn().Err(err).Str("ticker", req.Ticker).Msg("Failed to regenerate persisted assessment diff")
-		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to persist assessment"})
+		return
+	}
+
+	// Rebuild and persist diff whenever a new source assessment is saved.
+	if err := h.regenerateAndPersistAssessmentDiff(req.Ticker); err != nil {
+		h.logger.Warn().Err(err).Str("ticker", req.Ticker).Msg("Failed to regenerate persisted assessment diff")
 	}
 
 	c.JSON(http.StatusOK, AssessmentResponse{
@@ -468,7 +469,7 @@ func (h *AssessmentHandler) GetAssessmentsByTicker(c *gin.Context) {
 		limit = parsedLimit
 	}
 
-	query := h.db.Where("ticker = ?", ticker).Order("created_at DESC").Limit(limit)
+	query := h.db.Where("UPPER(ticker) = ?", ticker).Order("created_at DESC").Limit(limit)
 	if source != "" {
 		query = query.Where("source = ?", source)
 	}
@@ -492,7 +493,7 @@ func (h *AssessmentHandler) GetAssessmentDiffByTicker(c *gin.Context) {
 	}
 
 	var diff models.AssessmentDiff
-	if err := h.db.Where("ticker = ?", ticker).First(&diff).Error; err != nil {
+	if err := h.db.Where("UPPER(ticker) = ?", ticker).First(&diff).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusOK, gin.H{"rows": []AssessmentCompareRow{}})
 			return
