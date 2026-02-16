@@ -386,6 +386,11 @@ func (h *AssessmentHandler) RequestAssessment(c *gin.Context) {
 
 	// Convert ticker to uppercase
 	req.Ticker = strings.ToUpper(req.Ticker)
+	portfolioID, resolveErr := h.resolvePortfolioID(c)
+	if resolveErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
 
 	h.logger.Info().
 		Str("ticker", req.Ticker).
@@ -415,14 +420,14 @@ func (h *AssessmentHandler) RequestAssessment(c *gin.Context) {
 	}
 
 	// Persist one latest assessment per ticker+source (replace old with new).
-	if err := h.upsertAssessment(req.Ticker, req.Source, assessment); err != nil {
+	if err := h.upsertAssessment(portfolioID, req.Ticker, req.Source, assessment); err != nil {
 		h.logger.Error().Err(err).Msg("Failed to persist assessment")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to persist assessment"})
 		return
 	}
 
 	// Rebuild and persist diff whenever a new source assessment is saved.
-	if err := h.regenerateAndPersistAssessmentDiff(req.Ticker); err != nil {
+	if err := h.regenerateAndPersistAssessmentDiff(portfolioID, req.Ticker); err != nil {
 		h.logger.Warn().Err(err).Str("ticker", req.Ticker).Msg("Failed to regenerate persisted assessment diff")
 	}
 
@@ -433,10 +438,15 @@ func (h *AssessmentHandler) RequestAssessment(c *gin.Context) {
 
 // GetRecentAssessments returns recent assessments
 func (h *AssessmentHandler) GetRecentAssessments(c *gin.Context) {
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
 	var assessments []models.Assessment
 
 	// Get the last 20 assessments, ordered by creation time
-	if err := h.db.Order("created_at DESC").Limit(20).Find(&assessments).Error; err != nil {
+	if err := h.db.Where("portfolio_id = ?", portfolioID).Order("created_at DESC").Limit(20).Find(&assessments).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to fetch recent assessments")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch assessments"})
 		return
@@ -469,7 +479,13 @@ func (h *AssessmentHandler) GetAssessmentsByTicker(c *gin.Context) {
 		limit = parsedLimit
 	}
 
-	query := h.db.Where("UPPER(ticker) = ?", ticker).Order("created_at DESC").Limit(limit)
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
+	query := h.db.Where("portfolio_id = ? AND UPPER(ticker) = ?", portfolioID, ticker).Order("created_at DESC").Limit(limit)
 	if source != "" {
 		query = query.Where("source = ?", source)
 	}
@@ -1320,12 +1336,12 @@ func assessmentCompareFieldSpec() []struct {
 	}
 }
 
-func (h *AssessmentHandler) upsertAssessment(ticker, source, text string) error {
+func (h *AssessmentHandler) upsertAssessment(portfolioID uint, ticker, source, text string) error {
 	ticker = strings.ToUpper(strings.TrimSpace(ticker))
 	source = strings.ToLower(strings.TrimSpace(source))
 
 	var existing models.Assessment
-	err := h.db.Where("ticker = ? AND source = ?", ticker, source).First(&existing).Error
+	err := h.db.Where("portfolio_id = ? AND ticker = ? AND source = ?", portfolioID, ticker, source).First(&existing).Error
 	if err == nil {
 		if updateErr := h.db.Model(&existing).Updates(map[string]interface{}{
 			"assessment": text,
@@ -1335,18 +1351,19 @@ func (h *AssessmentHandler) upsertAssessment(ticker, source, text string) error 
 			return updateErr
 		}
 		// Clean up any legacy duplicates from older behavior.
-		return h.db.Where("ticker = ? AND source = ? AND id <> ?", ticker, source, existing.ID).Delete(&models.Assessment{}).Error
+		return h.db.Where("portfolio_id = ? AND ticker = ? AND source = ? AND id <> ?", portfolioID, ticker, source, existing.ID).Delete(&models.Assessment{}).Error
 	}
 	if err != gorm.ErrRecordNotFound {
 		return err
 	}
 
 	record := models.Assessment{
-		Ticker:     ticker,
-		Source:     source,
-		Assessment: text,
-		Status:     "completed",
-		CreatedAt:  time.Now(),
+		PortfolioID: portfolioID,
+		Ticker:      ticker,
+		Source:      source,
+		Assessment:  text,
+		Status:      "completed",
+		CreatedAt:   time.Now(),
 	}
 	return h.db.Create(&record).Error
 }
@@ -1486,10 +1503,10 @@ func (h *AssessmentHandler) persistAssessmentDiff(ticker string, rows []Assessme
 	return h.db.Create(&record).Error
 }
 
-func (h *AssessmentHandler) regenerateAndPersistAssessmentDiff(ticker string) error {
+func (h *AssessmentHandler) regenerateAndPersistAssessmentDiff(portfolioID uint, ticker string) error {
 	ticker = strings.ToUpper(strings.TrimSpace(ticker))
 	var records []models.Assessment
-	if err := h.db.Where("ticker = ? AND source IN ? AND status = ?", ticker, []string{"grok", "deepseek"}, "completed").Find(&records).Error; err != nil {
+	if err := h.db.Where("portfolio_id = ? AND ticker = ? AND source IN ? AND status = ?", portfolioID, ticker, []string{"grok", "deepseek"}, "completed").Find(&records).Error; err != nil {
 		return err
 	}
 
