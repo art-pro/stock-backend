@@ -29,19 +29,37 @@ type AssessmentHandler struct {
 
 // AssessmentRequest represents the request for stock assessment
 type AssessmentRequest struct {
-	Ticker                string  `json:"ticker" binding:"required"`
-	Source                string  `json:"source" binding:"required,oneof=grok deepseek"`
-	CompanyName           string  `json:"company_name,omitempty"`
-	CurrentPrice          float64 `json:"current_price,omitempty"`
-	Currency              string  `json:"currency,omitempty"`
-	RebalanceHint         string  `json:"rebalance_hint,omitempty"`          // Dashboard: sector rebalance hint
-	ConcentrationHint     string  `json:"concentration_hint,omitempty"`     // Dashboard: concentration & tail risk
-	SuggestedActionsHint  string  `json:"suggested_actions_hint,omitempty"` // Dashboard: suggested next actions
+	Ticker               string  `json:"ticker" binding:"required"`
+	Source               string  `json:"source" binding:"required,oneof=grok deepseek"`
+	CompanyName          string  `json:"company_name,omitempty"`
+	CurrentPrice         float64 `json:"current_price,omitempty"`
+	Currency             string  `json:"currency,omitempty"`
+	RebalanceHint        string  `json:"rebalance_hint,omitempty"`         // Dashboard: sector rebalance hint
+	ConcentrationHint    string  `json:"concentration_hint,omitempty"`     // Dashboard: concentration & tail risk
+	SuggestedActionsHint string  `json:"suggested_actions_hint,omitempty"` // Dashboard: suggested next actions
 }
 
 // AssessmentResponse represents the response containing assessment
 type AssessmentResponse struct {
 	Assessment string `json:"assessment"`
+}
+
+type AssessmentCompareRequest struct {
+	Ticker             string `json:"ticker" binding:"required"`
+	GrokAssessment     string `json:"grok_assessment" binding:"required"`
+	DeepseekAssessment string `json:"deepseek_assessment" binding:"required"`
+}
+
+type AssessmentCompareRow struct {
+	Key      string `json:"key"`
+	Label    string `json:"label"`
+	Grok     string `json:"grok"`
+	Deepseek string `json:"deepseek"`
+}
+
+type assessmentCompareLLMResult struct {
+	Grok     map[string]string `json:"grok"`
+	Deepseek map[string]string `json:"deepseek"`
 }
 
 // NewAssessmentHandler creates a new assessment handler
@@ -470,6 +488,148 @@ func (h *AssessmentHandler) GetAssessmentsByTicker(c *gin.Context) {
 	c.JSON(http.StatusOK, assessments)
 }
 
+// CompareAssessments extracts comparable fields from Grok and Deepseek summaries.
+func (h *AssessmentHandler) CompareAssessments(c *gin.Context) {
+	var req AssessmentCompareRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	source := "grok"
+	if h.cfg.XAIAPIKey == "" && h.cfg.DeepseekAPIKey != "" {
+		source = "deepseek"
+	}
+	if h.cfg.XAIAPIKey == "" && h.cfg.DeepseekAPIKey == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No LLM API key configured"})
+		return
+	}
+
+	fieldSpec := []struct {
+		Key   string
+		Label string
+	}{
+		{"current_price", "Current Price"},
+		{"fair_value_estimate", "Fair Value Estimate"},
+		{"upside_potential", "Upside Potential"},
+		{"beta", "Beta"},
+		{"downside_risk", "Downside Risk (D)"},
+		{"probability_positive", "Probability of Positive Outcome (p)"},
+		{"volatility", "Volatility (σ)"},
+		{"forward_pe_ratio", "Forward P/E Ratio"},
+		{"eps_growth", "EPS Growth"},
+		{"debt_to_ebitda_ttm", "Debt-to-EBITDA (TTM)"},
+		{"dividend_yield", "Dividend Yield"},
+		{"expected_value_calculation", "Expected Value (EV) Calculation"},
+		{"kelly_criterion_sizing", "Kelly Criterion Sizing"},
+		{"buy_zone", "Buy Zone"},
+		{"final_assessment", "Final Assessment"},
+	}
+
+	systemContent := "You are a financial data extraction assistant. Extract only values explicitly present in text. If a field is absent, return 'N/A'. For final assessment return only ADD, SELL, or HOLD if clearly stated, otherwise N/A."
+	userContent := fmt.Sprintf(`Extract the requested fields from two stock assessment summaries for ticker %s.
+
+Return STRICT JSON with this exact shape:
+{
+  "grok": {
+    "current_price": "...",
+    "fair_value_estimate": "...",
+    "upside_potential": "...",
+    "beta": "...",
+    "downside_risk": "...",
+    "probability_positive": "...",
+    "volatility": "...",
+    "forward_pe_ratio": "...",
+    "eps_growth": "...",
+    "debt_to_ebitda_ttm": "...",
+    "dividend_yield": "...",
+    "expected_value_calculation": "...",
+    "kelly_criterion_sizing": "...",
+    "buy_zone": "...",
+    "final_assessment": "ADD|SELL|HOLD|N/A"
+  },
+  "deepseek": {
+    "current_price": "...",
+    "fair_value_estimate": "...",
+    "upside_potential": "...",
+    "beta": "...",
+    "downside_risk": "...",
+    "probability_positive": "...",
+    "volatility": "...",
+    "forward_pe_ratio": "...",
+    "eps_growth": "...",
+    "debt_to_ebitda_ttm": "...",
+    "dividend_yield": "...",
+    "expected_value_calculation": "...",
+    "kelly_criterion_sizing": "...",
+    "buy_zone": "...",
+    "final_assessment": "ADD|SELL|HOLD|N/A"
+  }
+}
+
+Rules:
+- Keep values compact and human-readable.
+- Preserve units/percent signs if present.
+- Do not invent missing data.
+- Output raw JSON only, no markdown.
+
+GROK SUMMARY:
+%s
+
+DEEPSEEK SUMMARY:
+%s
+`, strings.ToUpper(strings.TrimSpace(req.Ticker)), req.GrokAssessment, req.DeepseekAssessment)
+
+	content, err := h.callChatCompletion(systemContent, userContent, source)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to compare assessments: " + err.Error()})
+		return
+	}
+
+	content = strings.TrimSpace(content)
+	if strings.HasPrefix(content, "```json") {
+		content = strings.TrimPrefix(content, "```json")
+		content = strings.TrimSuffix(content, "```")
+	} else if strings.HasPrefix(content, "```") {
+		content = strings.TrimPrefix(content, "```")
+		content = strings.TrimSuffix(content, "```")
+	}
+	content = strings.TrimSpace(content)
+
+	var parsed assessmentCompareLLMResult
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		h.logger.Error().Err(err).Str("content", content).Msg("Failed to parse assessment comparison JSON")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse comparison output"})
+		return
+	}
+
+	rows := make([]AssessmentCompareRow, 0, len(fieldSpec))
+	for _, f := range fieldSpec {
+		grokValue := "N/A"
+		deepseekValue := "N/A"
+		if parsed.Grok != nil {
+			if value := strings.TrimSpace(parsed.Grok[f.Key]); value != "" {
+				grokValue = value
+			}
+		}
+		if parsed.Deepseek != nil {
+			if value := strings.TrimSpace(parsed.Deepseek[f.Key]); value != "" {
+				deepseekValue = value
+			}
+		}
+		rows = append(rows, AssessmentCompareRow{
+			Key:      f.Key,
+			Label:    f.Label,
+			Grok:     grokValue,
+			Deepseek: deepseekValue,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"rows": rows,
+	})
+}
+
 // GetAssessmentById returns a specific assessment by ID
 func (h *AssessmentHandler) GetAssessmentById(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
@@ -500,9 +660,9 @@ type BatchAssessmentRequest struct {
 
 // BatchAssessmentItem is one result in the batch assessment response.
 type BatchAssessmentItem struct {
-	Ticker          string `json:"ticker"`
-	AssessmentText  string `json:"assessment_text"`
-	Source          string `json:"source"`
+	Ticker         string `json:"ticker"`
+	AssessmentText string `json:"assessment_text"`
+	Source         string `json:"source"`
 }
 
 // BatchAssessment runs LLM assessment for multiple tickers; returns text only (no DB write).
@@ -587,13 +747,13 @@ func (h *AssessmentHandler) BatchAssessment(c *gin.Context) {
 
 // ExplainAssessmentRequest can identify a stock by ID or by ticker + metrics.
 type ExplainAssessmentRequest struct {
-	StockID    *uint    `json:"stock_id"`
-	Ticker     string   `json:"ticker"`
-	EV         *float64 `json:"ev"`
-	Upside     *float64 `json:"upside"`
-	Downside   *float64 `json:"downside"`
+	StockID     *uint    `json:"stock_id"`
+	Ticker      string   `json:"ticker"`
+	EV          *float64 `json:"ev"`
+	Upside      *float64 `json:"upside"`
+	Downside    *float64 `json:"downside"`
 	Probability *float64 `json:"probability"`
-	Assessment string   `json:"assessment"`
+	Assessment  string   `json:"assessment"`
 }
 
 // ExplainAssessment returns a short LLM explanation of why the model recommends Add/Hold/Trim/Sell.
@@ -666,9 +826,9 @@ In one short paragraph, explain why the model recommends this action (Add/Hold/T
 
 // SectorSummaryRequest is the request for sector/theme summary.
 type SectorSummaryRequest struct {
-	PortfolioID *uint   `json:"portfolio_id"`
-	Sector     string  `json:"sector"`
-	Tickers    []string `json:"tickers"`
+	PortfolioID *uint    `json:"portfolio_id"`
+	Sector      string   `json:"sector"`
+	Tickers     []string `json:"tickers"`
 }
 
 // SectorSummary returns a short LLM narrative for a sector or list of tickers.
