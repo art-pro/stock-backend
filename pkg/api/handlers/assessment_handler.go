@@ -30,6 +30,7 @@ type AssessmentHandler struct {
 // AssessmentRequest represents the request for stock assessment
 type AssessmentRequest struct {
 	Ticker               string  `json:"ticker" binding:"required"`
+	ISIN                 string  `json:"isin,omitempty"`
 	Source               string  `json:"source" binding:"required,oneof=grok deepseek"`
 	CompanyName          string  `json:"company_name,omitempty"`
 	CurrentPrice         float64 `json:"current_price,omitempty"`
@@ -396,9 +397,9 @@ func (h *AssessmentHandler) RequestAssessment(c *gin.Context) {
 
 	switch req.Source {
 	case "grok":
-		assessment, err = h.generateGrokAssessment(req.Ticker, req.CompanyName, req.CurrentPrice, req.Currency, req.RebalanceHint, req.ConcentrationHint, req.SuggestedActionsHint)
+		assessment, err = h.generateGrokAssessment(req.Ticker, req.ISIN, req.CompanyName, req.CurrentPrice, req.Currency, req.RebalanceHint, req.ConcentrationHint, req.SuggestedActionsHint)
 	case "deepseek":
-		assessment, err = h.generateDeepseekAssessment(req.Ticker, req.CompanyName, req.CurrentPrice, req.Currency, req.RebalanceHint, req.ConcentrationHint, req.SuggestedActionsHint)
+		assessment, err = h.generateDeepseekAssessment(req.Ticker, req.ISIN, req.CompanyName, req.CurrentPrice, req.Currency, req.RebalanceHint, req.ConcentrationHint, req.SuggestedActionsHint)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid source. Must be 'grok' or 'deepseek'"})
 		return
@@ -621,7 +622,7 @@ func (h *AssessmentHandler) BatchAssessment(c *gin.Context) {
 				currentPrice = s.CurrentPrice
 				currency = s.Currency
 			}
-			prompt := h.buildAssessmentPrompt(ticker, companyName, currentPrice, currency, portfolioData, cashData, "", "", "")
+			prompt := h.buildAssessmentPrompt(ticker, "", companyName, currentPrice, currency, portfolioData, cashData, "", "", "")
 			text, err := h.callChatCompletion(systemContent, prompt, source)
 			if err != nil {
 				h.logger.Warn().Err(err).Str("ticker", ticker).Msg("Batch assessment failed for ticker")
@@ -809,7 +810,7 @@ Provide a short narrative (2–4 sentences) covering: outlook, main risks, and h
 }
 
 // generateGrokAssessment generates assessment using Grok AI
-func (h *AssessmentHandler) generateGrokAssessment(ticker, companyName string, currentPrice float64, currency string, rebalanceHint, concentrationHint, suggestedActionsHint string) (string, error) {
+func (h *AssessmentHandler) generateGrokAssessment(ticker, isin, companyName string, currentPrice float64, currency string, rebalanceHint, concentrationHint, suggestedActionsHint string) (string, error) {
 	if h.cfg.XAIAPIKey == "" {
 		return "", fmt.Errorf("Grok AI API key not configured")
 	}
@@ -821,7 +822,7 @@ func (h *AssessmentHandler) generateGrokAssessment(ticker, companyName string, c
 	}
 
 	// Create the comprehensive prompt based on your strategy (includes dashboard hints when provided)
-	prompt := h.buildAssessmentPrompt(ticker, companyName, currentPrice, currency, portfolioData, cashData, rebalanceHint, concentrationHint, suggestedActionsHint)
+	prompt := h.buildAssessmentPrompt(ticker, isin, companyName, currentPrice, currency, portfolioData, cashData, rebalanceHint, concentrationHint, suggestedActionsHint)
 
 	// Build Grok API request
 	reqBody := map[string]interface{}{
@@ -898,7 +899,7 @@ func (h *AssessmentHandler) generateGrokAssessment(ticker, companyName string, c
 }
 
 // generateDeepseekAssessment generates assessment using Deepseek AI
-func (h *AssessmentHandler) generateDeepseekAssessment(ticker, companyName string, currentPrice float64, currency string, rebalanceHint, concentrationHint, suggestedActionsHint string) (string, error) {
+func (h *AssessmentHandler) generateDeepseekAssessment(ticker, isin, companyName string, currentPrice float64, currency string, rebalanceHint, concentrationHint, suggestedActionsHint string) (string, error) {
 	if h.cfg.DeepseekAPIKey == "" {
 		return "", fmt.Errorf("Deepseek AI API key not configured")
 	}
@@ -910,7 +911,7 @@ func (h *AssessmentHandler) generateDeepseekAssessment(ticker, companyName strin
 	}
 
 	// Create the comprehensive prompt based on your strategy (includes dashboard hints when provided)
-	prompt := h.buildAssessmentPrompt(ticker, companyName, currentPrice, currency, portfolioData, cashData, rebalanceHint, concentrationHint, suggestedActionsHint)
+	prompt := h.buildAssessmentPrompt(ticker, isin, companyName, currentPrice, currency, portfolioData, cashData, rebalanceHint, concentrationHint, suggestedActionsHint)
 
 	// Build Deepseek API request
 	reqBody := map[string]interface{}{
@@ -1171,7 +1172,7 @@ func (h *AssessmentHandler) buildPortfolioContext(portfolio []models.Stock, cash
 }
 
 // buildAssessmentPrompt creates the comprehensive prompt for stock assessment
-func (h *AssessmentHandler) buildAssessmentPrompt(ticker, companyName string, currentPrice float64, currency string, portfolio []models.Stock, cashHoldings []models.CashHolding, rebalanceHint, concentrationHint, suggestedActionsHint string) string {
+func (h *AssessmentHandler) buildAssessmentPrompt(ticker, isin, companyName string, currentPrice float64, currency string, portfolio []models.Stock, cashHoldings []models.CashHolding, rebalanceHint, concentrationHint, suggestedActionsHint string) string {
 	// Build portfolio context string
 	portfolioContext := h.buildPortfolioContext(portfolio, cashHoldings)
 	// Append dashboard hints when provided by the frontend (Sector rebalance hint, Concentration & tail risk, Suggested next actions)
@@ -1195,6 +1196,9 @@ func (h *AssessmentHandler) buildAssessmentPrompt(ticker, companyName string, cu
 	stockInfo := ""
 	if companyName != "" {
 		stockInfo += fmt.Sprintf("\n**Company Name:** %s", companyName)
+	}
+	if strings.TrimSpace(isin) != "" {
+		stockInfo += fmt.Sprintf("\n**ISIN:** %s", strings.ToUpper(strings.TrimSpace(isin)))
 	}
 	if currentPrice > 0 && currency != "" {
 		stockInfo += fmt.Sprintf("\n**Current Price:** %.2f %s (user-provided)", currentPrice, currency)
