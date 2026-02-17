@@ -1125,8 +1125,8 @@ func (h *AssessmentHandler) generateChatGPTAssessment(ticker, isin, companyName 
 				"content": prompt,
 			},
 		},
-		"max_tokens": 4096,
-		"stream":     false,
+		"max_completion_tokens": 4096,
+		"stream":                false,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
