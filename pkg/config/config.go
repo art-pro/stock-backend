@@ -15,6 +15,7 @@ type Config struct {
 	XAIAPIKey             string
 	DeepseekAPIKey        string
 	PerplexityAPIKey      string
+	OpenAIAPIKey          string
 	ExchangeRatesAPIKey   string
 	SendGridAPIKey        string
 	AlertEmailFrom        string
@@ -39,6 +40,7 @@ func Load() *Config {
 		XAIAPIKey:             os.Getenv("XAI_API_KEY"),
 		DeepseekAPIKey:        os.Getenv("DEEPSEEK_API_KEY"),
 		PerplexityAPIKey:      os.Getenv("PERPLEXITY_API_KEY"),
+		OpenAIAPIKey:          os.Getenv("OPENAI_API_KEY"),
 		ExchangeRatesAPIKey:   os.Getenv("EXCHANGE_RATES_API_KEY"),
 		SendGridAPIKey:        os.Getenv("SENDGRID_API_KEY"),
 		AlertEmailFrom:        os.Getenv("ALERT_EMAIL_FROM"),
