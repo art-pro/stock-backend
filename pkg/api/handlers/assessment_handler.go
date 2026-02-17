@@ -31,7 +31,7 @@ type AssessmentHandler struct {
 type AssessmentRequest struct {
 	Ticker               string  `json:"ticker" binding:"required"`
 	ISIN                 string  `json:"isin,omitempty"`
-	Source               string  `json:"source" binding:"required,oneof=grok deepseek"`
+	Source               string  `json:"source" binding:"required,oneof=grok deepseek perplexity"`
 	CompanyName          string  `json:"company_name,omitempty"`
 	CurrentPrice         float64 `json:"current_price,omitempty"`
 	Currency             string  `json:"currency,omitempty"`
@@ -46,21 +46,24 @@ type AssessmentResponse struct {
 }
 
 type AssessmentCompareRequest struct {
-	Ticker             string `json:"ticker" binding:"required"`
-	GrokAssessment     string `json:"grok_assessment" binding:"required"`
-	DeepseekAssessment string `json:"deepseek_assessment" binding:"required"`
+	Ticker                string `json:"ticker" binding:"required"`
+	GrokAssessment        string `json:"grok_assessment" binding:"required"`
+	DeepseekAssessment    string `json:"deepseek_assessment" binding:"required"`
+	PerplexityAssessment  string `json:"perplexity_assessment,omitempty"`
 }
 
 type AssessmentCompareRow struct {
-	Key      string `json:"key"`
-	Label    string `json:"label"`
-	Grok     string `json:"grok"`
-	Deepseek string `json:"deepseek"`
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Grok        string `json:"grok"`
+	Deepseek    string `json:"deepseek"`
+	Perplexity  string `json:"perplexity,omitempty"`
 }
 
 type assessmentCompareLLMResult struct {
-	Grok     map[string]string `json:"grok"`
-	Deepseek map[string]string `json:"deepseek"`
+	Grok        map[string]string `json:"grok"`
+	Deepseek    map[string]string `json:"deepseek"`
+	Perplexity  map[string]string `json:"perplexity,omitempty"`
 }
 
 // NewAssessmentHandler creates a new assessment handler
@@ -405,8 +408,10 @@ func (h *AssessmentHandler) RequestAssessment(c *gin.Context) {
 		assessment, err = h.generateGrokAssessment(req.Ticker, req.ISIN, req.CompanyName, req.CurrentPrice, req.Currency, req.RebalanceHint, req.ConcentrationHint, req.SuggestedActionsHint)
 	case "deepseek":
 		assessment, err = h.generateDeepseekAssessment(req.Ticker, req.ISIN, req.CompanyName, req.CurrentPrice, req.Currency, req.RebalanceHint, req.ConcentrationHint, req.SuggestedActionsHint)
+	case "perplexity":
+		assessment, err = h.generatePerplexityAssessment(req.Ticker, req.ISIN, req.CompanyName, req.CurrentPrice, req.Currency, req.RebalanceHint, req.ConcentrationHint, req.SuggestedActionsHint)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid source. Must be 'grok' or 'deepseek'"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid source. Must be 'grok', 'deepseek', or 'perplexity'"})
 		return
 	}
 
@@ -464,8 +469,8 @@ func (h *AssessmentHandler) GetAssessmentsByTicker(c *gin.Context) {
 	}
 
 	source := strings.ToLower(strings.TrimSpace(c.Query("source")))
-	if source != "" && source != "grok" && source != "deepseek" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid source. Must be 'grok' or 'deepseek'"})
+	if source != "" && source != "grok" && source != "deepseek" && source != "perplexity" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid source. Must be 'grok', 'deepseek', or 'perplexity'"})
 		return
 	}
 
@@ -538,7 +543,7 @@ func (h *AssessmentHandler) CompareAssessments(c *gin.Context) {
 	}
 
 	ticker := strings.ToUpper(strings.TrimSpace(req.Ticker))
-	rows, err := h.extractAssessmentCompareRows(ticker, req.GrokAssessment, req.DeepseekAssessment)
+	rows, err := h.extractAssessmentCompareRows(ticker, req.GrokAssessment, req.DeepseekAssessment, req.PerplexityAssessment)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to compare assessments: " + err.Error()})
 		return
@@ -1004,6 +1009,92 @@ func (h *AssessmentHandler) generateDeepseekAssessment(ticker, isin, companyName
 	return content, nil
 }
 
+// generatePerplexityAssessment generates assessment using Perplexity (Sonar) AI
+func (h *AssessmentHandler) generatePerplexityAssessment(ticker, isin, companyName string, currentPrice float64, currency string, rebalanceHint, concentrationHint, suggestedActionsHint string) (string, error) {
+	if h.cfg.PerplexityAPIKey == "" {
+		return "", fmt.Errorf("Perplexity AI API key not configured")
+	}
+
+	portfolioData, cashData, err := h.fetchPortfolioContext()
+	if err != nil {
+		h.logger.Warn().Err(err).Msg("Failed to fetch portfolio context, continuing without it")
+	}
+
+	prompt := h.buildAssessmentPrompt(ticker, isin, companyName, currentPrice, currency, portfolioData, cashData, rebalanceHint, concentrationHint, suggestedActionsHint)
+
+	reqBody := map[string]interface{}{
+		"model": "sonar-pro",
+		"messages": []map[string]string{
+			{
+				"role":    "system",
+				"content": "You are a financial advisor and investment consultant using a probabilistic strategy. You provide detailed stock analysis following the Kelly Criterion framework. Always provide complete, structured analysis. Use the most recent market data available and indicate data freshness in your analysis.",
+			},
+			{
+				"role":    "user",
+				"content": prompt,
+			},
+		},
+		"max_tokens": 4096,
+		"stream":     false,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", "https://api.perplexity.ai/chat/completions", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.cfg.PerplexityAPIKey)
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to call Perplexity API: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("Perplexity API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var perplexityResp map[string]interface{}
+	if err := json.Unmarshal(body, &perplexityResp); err != nil {
+		return "", fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	choices, ok := perplexityResp["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return "", fmt.Errorf("no choices in response")
+	}
+
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid choice format")
+	}
+
+	message, ok := choice["message"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid message format")
+	}
+
+	content, ok := message["content"].(string)
+	if !ok {
+		return "", fmt.Errorf("invalid content format")
+	}
+
+	return content, nil
+}
+
 // resolvePortfolioID returns portfolio_id from query or default.
 func (h *AssessmentHandler) resolvePortfolioID(c *gin.Context) (uint, error) {
 	if portfolioIDParam := c.Query("portfolio_id"); portfolioIDParam != "" {
@@ -1016,16 +1107,21 @@ func (h *AssessmentHandler) resolvePortfolioID(c *gin.Context) (uint, error) {
 	return database.GetDefaultPortfolioID(h.db)
 }
 
-// callChatCompletion calls Grok or Deepseek chat API and returns the assistant content.
+// callChatCompletion calls Grok, Deepseek, or Perplexity chat API and returns the assistant content.
 func (h *AssessmentHandler) callChatCompletion(systemContent, userContent, source string) (string, error) {
 	var url string
 	var apiKey string
 	var model string
-	if source == "deepseek" {
+	switch source {
+	case "deepseek":
 		url = "https://api.deepseek.com/v1/chat/completions"
 		apiKey = h.cfg.DeepseekAPIKey
 		model = "deepseek-reasoner"
-	} else {
+	case "perplexity":
+		url = "https://api.perplexity.ai/chat/completions"
+		apiKey = h.cfg.PerplexityAPIKey
+		model = "sonar-pro"
+	default:
 		url = "https://api.x.ai/v1/chat/completions"
 		apiKey = h.cfg.XAIAPIKey
 		model = "grok-4-1-fast-reasoning-latest"
@@ -1368,19 +1464,43 @@ func (h *AssessmentHandler) upsertAssessment(portfolioID uint, ticker, source, t
 	return h.db.Create(&record).Error
 }
 
-func (h *AssessmentHandler) extractAssessmentCompareRows(ticker, grokAssessment, deepseekAssessment string) ([]AssessmentCompareRow, error) {
+func (h *AssessmentHandler) extractAssessmentCompareRows(ticker, grokAssessment, deepseekAssessment, perplexityAssessment string) ([]AssessmentCompareRow, error) {
 	source := "grok"
 	if h.cfg.XAIAPIKey == "" && h.cfg.DeepseekAPIKey != "" {
 		source = "deepseek"
 	}
-	if h.cfg.XAIAPIKey == "" && h.cfg.DeepseekAPIKey == "" {
+	if h.cfg.XAIAPIKey == "" && h.cfg.DeepseekAPIKey == "" && h.cfg.PerplexityAPIKey == "" {
 		return nil, fmt.Errorf("No LLM API key configured")
 	}
+	if h.cfg.XAIAPIKey == "" && h.cfg.DeepseekAPIKey == "" {
+		source = "perplexity"
+	}
 
+	perplexityBlock := ""
+	if perplexityAssessment != "" {
+		perplexityBlock = `,
+  "perplexity": {
+    "current_price": "...",
+    "fair_value_estimate": "...",
+    "upside_potential": "...",
+    "beta": "...",
+    "downside_risk": "...",
+    "probability_positive": "...",
+    "volatility": "...",
+    "forward_pe_ratio": "...",
+    "eps_growth": "...",
+    "debt_to_ebitda_ttm": "...",
+    "dividend_yield": "...",
+    "expected_value_calculation": "...",
+    "kelly_criterion_sizing": "...",
+    "buy_zone": "...",
+    "final_assessment": "ADD|SELL|HOLD|N/A"
+  }`
+	}
 	systemContent := "You are a financial data extraction assistant. Extract only values explicitly present in text. If a field is absent, return 'N/A'. For final assessment return only ADD, SELL, or HOLD if clearly stated, otherwise N/A."
-	userContent := fmt.Sprintf(`Extract the requested fields from two stock assessment summaries for ticker %s.
+	userContent := fmt.Sprintf(`Extract the requested fields from the stock assessment summaries for ticker %s.
 
-Return STRICT JSON with this exact shape:
+Return STRICT JSON with this exact shape (include "perplexity" only if PERPLEXITY SUMMARY is provided below):
 {
   "grok": {
     "current_price": "...",
@@ -1415,7 +1535,7 @@ Return STRICT JSON with this exact shape:
     "kelly_criterion_sizing": "...",
     "buy_zone": "...",
     "final_assessment": "ADD|SELL|HOLD|N/A"
-  }
+  }%s
 }
 
 Rules:
@@ -1429,7 +1549,10 @@ GROK SUMMARY:
 
 DEEPSEEK SUMMARY:
 %s
-`, ticker, grokAssessment, deepseekAssessment)
+`, ticker, perplexityBlock, grokAssessment, deepseekAssessment)
+	if perplexityAssessment != "" {
+		userContent += "\n\nPERPLEXITY SUMMARY:\n" + perplexityAssessment
+	}
 
 	content, err := h.callChatCompletion(systemContent, userContent, source)
 	if err != nil {
@@ -1457,6 +1580,7 @@ DEEPSEEK SUMMARY:
 	for _, f := range fieldSpec {
 		grokValue := "N/A"
 		deepseekValue := "N/A"
+		perplexityValue := "N/A"
 		if parsed.Grok != nil {
 			if value := strings.TrimSpace(parsed.Grok[f.Key]); value != "" {
 				grokValue = value
@@ -1467,11 +1591,17 @@ DEEPSEEK SUMMARY:
 				deepseekValue = value
 			}
 		}
+		if parsed.Perplexity != nil {
+			if value := strings.TrimSpace(parsed.Perplexity[f.Key]); value != "" {
+				perplexityValue = value
+			}
+		}
 		rows = append(rows, AssessmentCompareRow{
-			Key:      f.Key,
-			Label:    f.Label,
-			Grok:     grokValue,
-			Deepseek: deepseekValue,
+			Key:        f.Key,
+			Label:      f.Label,
+			Grok:       grokValue,
+			Deepseek:   deepseekValue,
+			Perplexity: perplexityValue,
 		})
 	}
 
@@ -1506,18 +1636,19 @@ func (h *AssessmentHandler) persistAssessmentDiff(ticker string, rows []Assessme
 func (h *AssessmentHandler) regenerateAndPersistAssessmentDiff(portfolioID uint, ticker string) error {
 	ticker = strings.ToUpper(strings.TrimSpace(ticker))
 	var records []models.Assessment
-	if err := h.db.Where("portfolio_id = ? AND ticker = ? AND source IN ? AND status = ?", portfolioID, ticker, []string{"grok", "deepseek"}, "completed").Find(&records).Error; err != nil {
+	if err := h.db.Where("portfolio_id = ? AND ticker = ? AND source IN ? AND status = ?", portfolioID, ticker, []string{"grok", "deepseek", "perplexity"}, "completed").Find(&records).Error; err != nil {
 		return err
 	}
 
-	var grokText string
-	var deepseekText string
+	var grokText, deepseekText, perplexityText string
 	for _, record := range records {
 		switch strings.ToLower(record.Source) {
 		case "grok":
 			grokText = record.Assessment
 		case "deepseek":
 			deepseekText = record.Assessment
+		case "perplexity":
+			perplexityText = record.Assessment
 		}
 	}
 
@@ -1525,7 +1656,7 @@ func (h *AssessmentHandler) regenerateAndPersistAssessmentDiff(portfolioID uint,
 		return nil
 	}
 
-	rows, err := h.extractAssessmentCompareRows(ticker, grokText, deepseekText)
+	rows, err := h.extractAssessmentCompareRows(ticker, grokText, deepseekText, perplexityText)
 	if err != nil {
 		return err
 	}
