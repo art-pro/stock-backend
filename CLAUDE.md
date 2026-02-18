@@ -385,6 +385,6 @@ Update behavior:
 
 ---
 
-**Changelog (recent):** v2.9.0 – Operations API (POST/GET /operations), Operation model, cash adjustment and stock create/update from Buy/Sell within transaction; `AdjustCash(tx, ...)` for transactional use.
+**Changelog (recent):** v2.10.0 – Stored assessments capped at 100; `cleanupOldAssessments()` runs after each upsert and deletes oldest by `created_at`. v2.9.0 – Operations API (POST/GET/DELETE/PUT /operations), Operation model, cash/stock create/update/delete with reversal; `AdjustCash(tx, ...)` for transactional use.
 
 Last updated: 2026-02-18

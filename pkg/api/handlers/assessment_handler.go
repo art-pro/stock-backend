@@ -435,6 +435,7 @@ func (h *AssessmentHandler) RequestAssessment(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to persist assessment"})
 		return
 	}
+	h.cleanupOldAssessments()
 
 	// Rebuild and persist diff whenever a new source assessment is saved.
 	if err := h.regenerateAndPersistAssessmentDiff(portfolioID, req.Ticker); err != nil {
@@ -1794,38 +1795,33 @@ func (h *AssessmentHandler) regenerateAndPersistAssessmentDiff(portfolioID uint,
 	return h.persistAssessmentDiff(ticker, rows)
 }
 
-// cleanupOldAssessments removes assessments beyond the most recent 20
+const maxStoredAssessments = 100
+
+// cleanupOldAssessments keeps at most maxStoredAssessments; deletes oldest first.
 func (h *AssessmentHandler) cleanupOldAssessments() {
-	// Count total assessments
 	var count int64
 	if err := h.db.Model(&models.Assessment{}).Count(&count).Error; err != nil {
 		h.logger.Error().Err(err).Msg("Failed to count assessments")
 		return
 	}
-
-	// If we have more than 20, delete the oldest ones
-	if count > 20 {
-		// Get IDs of assessments to delete (keep the most recent 20)
-		var idsToDelete []uint
-		if err := h.db.Model(&models.Assessment{}).
-			Select("id").
-			Order("created_at ASC").
-			Limit(int(count-20)).
-			Pluck("id", &idsToDelete).Error; err != nil {
-			h.logger.Error().Err(err).Msg("Failed to get assessment IDs for cleanup")
-			return
-		}
-
-		// Delete the old assessments
-		if len(idsToDelete) > 0 {
-			if err := h.db.Where("id IN ?", idsToDelete).Delete(&models.Assessment{}).Error; err != nil {
-				h.logger.Error().Err(err).Msg("Failed to delete old assessments")
-			} else {
-				h.logger.Info().
-					Int("deleted", len(idsToDelete)).
-					Int64("total_remaining", 20).
-					Msg("Cleaned up old assessments")
-			}
-		}
+	if count <= maxStoredAssessments {
+		return
+	}
+	var idsToDelete []uint
+	if err := h.db.Model(&models.Assessment{}).
+		Select("id").
+		Order("created_at ASC").
+		Limit(int(count - maxStoredAssessments)).
+		Pluck("id", &idsToDelete).Error; err != nil {
+		h.logger.Error().Err(err).Msg("Failed to get assessment IDs for cleanup")
+		return
+	}
+	if len(idsToDelete) == 0 {
+		return
+	}
+	if err := h.db.Where("id IN ?", idsToDelete).Delete(&models.Assessment{}).Error; err != nil {
+		h.logger.Error().Err(err).Msg("Failed to delete old assessments")
+	} else {
+		h.logger.Info().Int("deleted", len(idsToDelete)).Int("remaining", maxStoredAssessments).Msg("Cleaned up old assessments")
 	}
 }
