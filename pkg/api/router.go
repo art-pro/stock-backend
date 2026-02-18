@@ -68,6 +68,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 	portfolioHandler := handlers.NewPortfolioHandler(db, cfg, logger)
 	exchangeRateHandler := handlers.NewExchangeRateHandler(db, cfg, logger)
 	cashHandler := handlers.NewCashHandler(db, cfg, logger)
+	operationHandler := handlers.NewOperationHandler(db, cashHandler, logger)
 	assessmentHandler := handlers.NewAssessmentHandler(db, cfg, logger)
 	settingsHandler := handlers.NewSettingsHandler(db, logger)
 
@@ -147,6 +148,10 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 		protected.PUT("/cash/:id", cashHandler.UpdateCashHolding)
 		protected.DELETE("/cash/:id", cashHandler.DeleteCashHolding)
 		protected.POST("/cash/refresh", cashHandler.RefreshUSDValues)
+
+		// Operations (trades) routes
+		protected.POST("/operations", operationHandler.CreateOperation)
+		protected.GET("/operations", operationHandler.ListOperations)
 
 		// Assessment routes (text-based)
 		protected.POST("/assessment/request", assessmentHandler.RequestAssessment)

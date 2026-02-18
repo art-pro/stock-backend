@@ -208,6 +208,7 @@ Implemented in `pkg/services/exchange_rate_service.go`.
 - Use DB transactions for multi-step state changes that must remain atomic.
   - Example: delete stock + create audit/deleted record.
   - Example: batch weight/current value updates in summary refresh.
+  - Example: create operation + adjust cash + optional stock update (all in one tx); `CashHandler.AdjustCash(tx, ...)` accepts transaction so cash runs inside the same tx.
 - If any write fails, rollback and return error.
 
 ## API Surface (Current Shape)
@@ -227,6 +228,7 @@ Protected (`/api`, JWT):
 - Deleted log: list + restore
 - Portfolio: summary + settings
 - Alerts: list + delete
+- **Operations**: `POST /operations` (body: operation_type, currency, quantity, trade_date, optional ticker/price/amount/note etc.; creates operation, updates cash via `CashHandler.AdjustCash`, and for Buy/Sell creates or updates stock); `GET /operations` (query `portfolio_id` optional; returns operations for portfolio, newest first). Cash impact: Buy/Withdraw decrease cash; Sell/Deposit/Dividend increase. Scoped by `portfolio_id` (query or default).
 - FX: list, refresh, add/update/delete currency
 - Cash: list/create/update/delete + refresh USD values
 - Assessment: request (body may include optional `rebalance_hint`, `concentration_hint`, `suggested_actions_hint` from frontend dashboard panes), vision extraction, recent/history
@@ -372,6 +374,7 @@ Update behavior:
 ## Tests
 
 - **`pkg/api/handlers/settings_handler_test.go`** – Sector targets: `GetSectorTargets` when no record (returns `rows: null`), `SaveSectorTargets` then GET roundtrip, empty rows returns 400, missing `user_id` returns 401. Uses in-memory SQLite and test user.
+- **`pkg/api/handlers/operation_handler_test.go`** – Operations: `CreateOperation` Deposit returns 201 and cash holding is created/updated; `ListOperations` returns created operations; invalid operation_type returns 400; empty list returns 200. Uses temp SQLite, default portfolio, USD/EUR exchange rates, `CashHandler` and `OperationHandler`.
 
 ## Quick Runbook
 
@@ -382,4 +385,6 @@ Update behavior:
 
 ---
 
-Last updated: 2026-02-15
+**Changelog (recent):** v2.9.0 – Operations API (POST/GET /operations), Operation model, cash adjustment and stock create/update from Buy/Sell within transaction; `AdjustCash(tx, ...)` for transactional use.
+
+Last updated: 2026-02-18

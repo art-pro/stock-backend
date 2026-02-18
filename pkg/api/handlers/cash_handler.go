@@ -272,43 +272,88 @@ func (h *CashHandler) RefreshUSDValues(c *gin.Context) {
 	})
 }
 
-// calculateUSDValue converts amount from given currency to USD
+// AdjustCash adds delta to the cash holding for the given portfolio and currency.
+// If no holding exists, one is created with amount = max(0, delta) then delta is applied (so initial amount may be 0+delta).
+// Used by operations (Buy/Sell/Deposit/Withdraw/Dividend) to update cash.
+// If tx is non-nil it is used for all DB operations (e.g. when called inside operation_handler's transaction).
+func (h *CashHandler) AdjustCash(tx *gorm.DB, portfolioID uint, currencyCode string, delta float64) error {
+	run := h.db
+	if tx != nil {
+		run = tx
+	}
+	var cash models.CashHolding
+	err := run.Where("portfolio_id = ? AND currency_code = ?", portfolioID, currencyCode).First(&cash).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// Create new holding; ensure currency exists in exchange rates
+			var ex models.ExchangeRate
+			if errEx := run.Where("currency_code = ?", currencyCode).First(&ex).Error; errEx != nil {
+				return errEx
+			}
+			amount := delta
+			if amount < 0 {
+				amount = 0
+			}
+			usdValue, _ := h.calculateUSDValueWithDB(run, currencyCode, amount)
+			cash = models.CashHolding{
+				PortfolioID:  portfolioID,
+				CurrencyCode: currencyCode,
+				Amount:       amount,
+				USDValue:     usdValue,
+				LastUpdated:  time.Now(),
+			}
+			if err := run.Create(&cash).Error; err != nil {
+				return err
+			}
+			if delta < 0 {
+				cash.Amount += delta // may go negative
+				cash.USDValue, _ = h.calculateUSDValueWithDB(run, currencyCode, cash.Amount)
+				cash.LastUpdated = time.Now()
+				return run.Save(&cash).Error
+			}
+			return nil
+		}
+		return err
+	}
+	cash.Amount += delta
+	usdValue, errUV := h.calculateUSDValueWithDB(run, currencyCode, cash.Amount)
+	if errUV != nil {
+		return errUV
+	}
+	cash.USDValue = usdValue
+	cash.LastUpdated = time.Now()
+	return run.Save(&cash).Error
+}
+
+// calculateUSDValue converts amount from given currency to USD (uses handler's db).
 func (h *CashHandler) calculateUSDValue(currencyCode string, amount float64) (float64, error) {
+	return h.calculateUSDValueWithDB(h.db, currencyCode, amount)
+}
+
+// calculateUSDValueWithDB converts amount from given currency to USD using the given db (or tx).
+func (h *CashHandler) calculateUSDValueWithDB(db *gorm.DB, currencyCode string, amount float64) (float64, error) {
 	// If EUR (base currency), convert to USD using USD rate
 	if currencyCode == "EUR" {
 		var usdRate models.ExchangeRate
-		if err := h.db.Where("currency_code = ?", "USD").First(&usdRate).Error; err != nil {
-			// If USD rate not found, assume 1:1 for development
+		if err := db.Where("currency_code = ?", "USD").First(&usdRate).Error; err != nil {
 			h.logger.Warn().Msg("USD exchange rate not found, using 1:1")
 			return amount, nil
 		}
-		// EUR to USD: multiply by USD rate
 		return amount * usdRate.Rate, nil
 	}
-
-	// If USD, return as is
 	if currencyCode == "USD" {
 		return amount, nil
 	}
-
-	// For other currencies, convert via EUR base
 	var exchangeRate models.ExchangeRate
-	if err := h.db.Where("currency_code = ?", currencyCode).First(&exchangeRate).Error; err != nil {
+	if err := db.Where("currency_code = ?", currencyCode).First(&exchangeRate).Error; err != nil {
 		h.logger.Warn().Str("currency", currencyCode).Msg("Exchange rate not found")
-		return amount, nil // Return original amount if no rate found
+		return amount, nil
 	}
-
-	// Convert to EUR first (amount / rate), then to USD
 	var usdRate models.ExchangeRate
-	if err := h.db.Where("currency_code = ?", "USD").First(&usdRate).Error; err != nil {
-		// If USD rate not found, return EUR equivalent
+	if err := db.Where("currency_code = ?", "USD").First(&usdRate).Error; err != nil {
 		h.logger.Warn().Msg("USD exchange rate not found, returning EUR equivalent")
 		return amount / exchangeRate.Rate, nil
 	}
-
-	// Convert: amount in currency -> EUR -> USD
 	amountInEUR := amount / exchangeRate.Rate
-	usdValue := amountInEUR * usdRate.Rate
-
-	return usdValue, nil
+	return amountInEUR * usdRate.Rate, nil
 }

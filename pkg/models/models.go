@@ -199,6 +199,27 @@ type AssessmentDiff struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// Operation represents a trade or cash operation (Buy, Sell, Deposit, Withdraw, Dividend)
+// Stored permanently for history; affects cash holdings and optionally stock position.
+type Operation struct {
+	ID           uint      `gorm:"primarykey" json:"id"`
+	PortfolioID  uint      `gorm:"not null;index" json:"portfolio_id"`
+	StockID      *uint     `json:"stock_id,omitempty"` // Optional link to stock for Buy/Sell
+	OperationType string   `gorm:"not null;index" json:"operation_type"` // Buy, Sell, Deposit, Withdraw, Dividend
+	Ticker       string   `gorm:"index" json:"ticker"`
+	ISIN         string   `json:"isin"`
+	CompanyName  string   `json:"company_name"`
+	Sector       string   `json:"sector"`
+	Currency     string   `gorm:"not null" json:"currency"`
+	Quantity     float64  `json:"quantity"` // Shares for Buy/Sell; can be amount for Deposit/Withdraw
+	Price        float64  `json:"price"`    // Price per share for Buy/Sell
+	Amount       float64  `json:"amount"`   // Total monetary amount in currency (for cash impact)
+	Note         string   `gorm:"type:text" json:"note"`
+	TradeDate    string   `gorm:"not null;index" json:"trade_date"` // DD.MM.YYYY
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 // BeforeCreate hook for Stock to set defaults
 func (s *Stock) BeforeCreate(tx *gorm.DB) error {
 	if s.UpdateFrequency == "" {
