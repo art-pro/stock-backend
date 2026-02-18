@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ func setupOperationHandlerTest(t *testing.T) (*gorm.DB, *OperationHandler, uint)
 		&models.Portfolio{},
 		&models.ExchangeRate{},
 		&models.CashHolding{},
+		&models.Stock{},
 		&models.Operation{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
@@ -187,5 +189,92 @@ func TestListOperations_Empty(t *testing.T) {
 	}
 	if len(list) != 0 {
 		t.Fatalf("list length: got %d want 0", len(list))
+	}
+}
+
+func TestDeleteOperation_ReversesCash(t *testing.T) {
+	t.Parallel()
+	db, h, portfolioID := setupOperationHandlerTest(t)
+	createBody, _ := json.Marshal(CreateOperationRequest{
+		OperationType: "Deposit",
+		Currency:      "USD",
+		Quantity:      100.0,
+		TradeDate:     "15.02.2026",
+	})
+	wCreate := httptest.NewRecorder()
+	cCreate, _ := gin.CreateTestContext(wCreate)
+	cCreate.Request = httptest.NewRequest(http.MethodPost, "/operations", bytes.NewReader(createBody))
+	cCreate.Request.Header.Set("Content-Type", "application/json")
+	h.CreateOperation(cCreate)
+	if wCreate.Code != http.StatusCreated {
+		t.Fatalf("create: got %d", wCreate.Code)
+	}
+	var op models.Operation
+	if err := json.Unmarshal(wCreate.Body.Bytes(), &op); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	wDel := httptest.NewRecorder()
+	cDel, _ := gin.CreateTestContext(wDel)
+	cDel.Request = httptest.NewRequest(http.MethodDelete, "/operations/"+strconv.FormatUint(uint64(op.ID), 10), nil)
+	cDel.Params = gin.Params{{Key: "id", Value: strconv.FormatUint(uint64(op.ID), 10)}}
+	h.DeleteOperation(cDel)
+	if wDel.Code != http.StatusOK {
+		t.Fatalf("delete status: got %d body: %s", wDel.Code, wDel.Body.Bytes())
+	}
+	var cash models.CashHolding
+	err := db.Where("portfolio_id = ? AND currency_code = ?", portfolioID, "USD").First(&cash).Error
+	if err == nil && cash.Amount != 0 {
+		t.Errorf("cash after delete: got %f want 0", cash.Amount)
+	}
+	var count int64
+	db.Model(&models.Operation{}).Where("id = ?", op.ID).Count(&count)
+	if count != 0 {
+		t.Errorf("operation still exists after delete")
+	}
+}
+
+func TestUpdateOperation_RecomputesCash(t *testing.T) {
+	t.Parallel()
+	db, h, portfolioID := setupOperationHandlerTest(t)
+	createBody, _ := json.Marshal(CreateOperationRequest{
+		OperationType: "Deposit",
+		Currency:      "USD",
+		Quantity:      50.0,
+		TradeDate:     "01.02.2026",
+	})
+	wCreate := httptest.NewRecorder()
+	cCreate, _ := gin.CreateTestContext(wCreate)
+	cCreate.Request = httptest.NewRequest(http.MethodPost, "/operations", bytes.NewReader(createBody))
+	cCreate.Request.Header.Set("Content-Type", "application/json")
+	h.CreateOperation(cCreate)
+	if wCreate.Code != http.StatusCreated {
+		t.Fatalf("create: got %d", wCreate.Code)
+	}
+	var op models.Operation
+	if err := json.Unmarshal(wCreate.Body.Bytes(), &op); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// Update to 80 USD
+	updateBody, _ := json.Marshal(CreateOperationRequest{
+		OperationType: "Deposit",
+		Currency:      "USD",
+		Quantity:      80.0,
+		TradeDate:     "01.02.2026",
+	})
+	wUpd := httptest.NewRecorder()
+	cUpd, _ := gin.CreateTestContext(wUpd)
+	cUpd.Request = httptest.NewRequest(http.MethodPut, "/operations/"+strconv.FormatUint(uint64(op.ID), 10), bytes.NewReader(updateBody))
+	cUpd.Request.Header.Set("Content-Type", "application/json")
+	cUpd.Params = gin.Params{{Key: "id", Value: strconv.FormatUint(uint64(op.ID), 10)}}
+	h.UpdateOperation(cUpd)
+	if wUpd.Code != http.StatusOK {
+		t.Fatalf("update status: got %d body: %s", wUpd.Code, wUpd.Body.Bytes())
+	}
+	var cash models.CashHolding
+	if err := db.Where("portfolio_id = ? AND currency_code = ?", portfolioID, "USD").First(&cash).Error; err != nil {
+		t.Fatalf("find cash: %v", err)
+	}
+	if cash.Amount != 80 {
+		t.Errorf("cash after update: got %f want 80", cash.Amount)
 	}
 }
