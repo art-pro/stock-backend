@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -150,68 +152,139 @@ type Choice struct {
 	FinishReason string  `json:"finish_reason"`
 }
 
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func alphaVantageSymbolCandidates(ticker string) []string {
+	normalized := strings.ToUpper(strings.TrimSpace(ticker))
+	if normalized == "" {
+		return nil
+	}
+
+	candidates := []string{normalized}
+	parts := strings.Fields(normalized)
+	if len(parts) < 2 {
+		return uniqueStrings(candidates)
+	}
+
+	base := strings.Join(parts[:len(parts)-1], "")
+	exchange := parts[len(parts)-1]
+
+	suffixByExchange := map[string]string{
+		"CPH":   "CO",
+		"CSE":   "CO",
+		"STO":   "ST",
+		"HEL":   "HE",
+		"OSL":   "OL",
+		"LSE":   "LON",
+		"XLON":  "LON",
+		"XETRA": "DE",
+		"FRA":   "DE",
+	}
+	suffix, ok := suffixByExchange[exchange]
+	if !ok {
+		return uniqueStrings(candidates)
+	}
+
+	baseNoSpaces := strings.ReplaceAll(base, " ", "")
+	baseWithDash := strings.ReplaceAll(baseNoSpaces, ".", "-")
+	baseWithoutDots := strings.ReplaceAll(baseNoSpaces, ".", "")
+
+	candidates = append(candidates,
+		baseNoSpaces+"."+suffix,
+		baseWithDash+"."+suffix,
+		baseWithoutDots+"."+suffix,
+	)
+	return uniqueStrings(candidates)
+}
+
 // FetchAlphaVantageQuote fetches real-time price from Alpha Vantage
 func (s *ExternalAPIService) FetchAlphaVantageQuote(ticker string) (*AlphaVantageQuote, error) {
 	if s.cfg.AlphaVantageAPIKey == "" {
 		return nil, fmt.Errorf("Alpha Vantage API key not configured")
 	}
 
-	// Enforce rate limiting
-	s.enforceAlphaVantageRateLimit()
-
-	// Build URL with proper parameters
-	url := fmt.Sprintf("https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=%s&apikey=%s&datatype=json",
-		ticker, s.cfg.AlphaVantageAPIKey)
-
-	resp, err := s.client.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch quote: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Check for rate limit (Alpha Vantage returns 200 with error message)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	candidates := alphaVantageSymbolCandidates(ticker)
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("invalid ticker %q", ticker)
 	}
 
-	// Read response body for error checking
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+	var lastErr error
+	for _, symbol := range candidates {
+		s.enforceAlphaVantageRateLimit()
+
+		params := url.Values{}
+		params.Set("function", "GLOBAL_QUOTE")
+		params.Set("symbol", symbol)
+		params.Set("apikey", s.cfg.AlphaVantageAPIKey)
+		params.Set("datatype", "json")
+		requestURL := "https://www.alphavantage.co/query?" + params.Encode()
+
+		resp, err := s.client.Get(requestURL)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: failed to fetch quote: %w", symbol, err)
+			continue
+		}
+
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("%s: failed to read response: %w", symbol, readErr)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("%s: API returned status %d", symbol, resp.StatusCode)
+			continue
+		}
+		if bytes.Contains(body, []byte("API call frequency")) || bytes.Contains(body, []byte("Thank you for using Alpha Vantage")) {
+			return nil, fmt.Errorf("Alpha Vantage rate limit reached (5 calls/minute for free tier)")
+		}
+		if bytes.Contains(body, []byte("Invalid API key")) {
+			return nil, fmt.Errorf("invalid Alpha Vantage API key")
+		}
+
+		var quote AlphaVantageQuote
+		if err := json.Unmarshal(body, &quote); err != nil {
+			lastErr = fmt.Errorf("%s: failed to decode quote: %w", symbol, err)
+			continue
+		}
+
+		if quote.Note != "" {
+			return nil, fmt.Errorf("Alpha Vantage rate limit: %s", quote.Note)
+		}
+		if quote.ErrorMessage != "" {
+			lastErr = fmt.Errorf("%s: Alpha Vantage error: %s", symbol, quote.ErrorMessage)
+			continue
+		}
+		if quote.Information != "" {
+			fmt.Printf("ℹ️ Alpha Vantage info (%s): %s\n", symbol, quote.Information)
+		}
+		if quote.GlobalQuote.Symbol == "" {
+			lastErr = fmt.Errorf("%s: no data returned", symbol)
+			continue
+		}
+		return &quote, nil
 	}
 
-	// Check for rate limit error in response
-	if bytes.Contains(body, []byte("API call frequency")) || bytes.Contains(body, []byte("Thank you for using Alpha Vantage")) {
-		return nil, fmt.Errorf("Alpha Vantage rate limit reached (5 calls/minute for free tier)")
+	if lastErr != nil {
+		return nil, fmt.Errorf("failed quote lookup for ticker %s: %w", ticker, lastErr)
 	}
-
-	// Check for invalid API key
-	if bytes.Contains(body, []byte("Invalid API key")) {
-		return nil, fmt.Errorf("invalid Alpha Vantage API key")
-	}
-
-	var quote AlphaVantageQuote
-	if err := json.Unmarshal(body, &quote); err != nil {
-		return nil, fmt.Errorf("failed to decode quote: %w", err)
-	}
-
-	// Check for structured error responses
-	if quote.Note != "" {
-		return nil, fmt.Errorf("Alpha Vantage rate limit: %s", quote.Note)
-	}
-	if quote.ErrorMessage != "" {
-		return nil, fmt.Errorf("Alpha Vantage error: %s", quote.ErrorMessage)
-	}
-	if quote.Information != "" {
-		fmt.Printf("ℹ️ Alpha Vantage info: %s\n", quote.Information)
-	}
-
-	// Check if we got valid data
-	if quote.GlobalQuote.Symbol == "" {
-		return nil, fmt.Errorf("no data returned for ticker %s", ticker)
-	}
-
-	return &quote, nil
+	return nil, fmt.Errorf("no data returned for ticker %s", ticker)
 }
 
 // FetchAlphaVantageOverview fetches company fundamentals from Alpha Vantage
@@ -220,61 +293,73 @@ func (s *ExternalAPIService) FetchAlphaVantageOverview(ticker string) (*AlphaVan
 		return nil, fmt.Errorf("Alpha Vantage API key not configured")
 	}
 
-	// Enforce rate limiting
-	s.enforceAlphaVantageRateLimit()
-
-	url := fmt.Sprintf("https://www.alphavantage.co/query?function=OVERVIEW&symbol=%s&apikey=%s&datatype=json",
-		ticker, s.cfg.AlphaVantageAPIKey)
-
-	resp, err := s.client.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch overview: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Check for rate limit
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	candidates := alphaVantageSymbolCandidates(ticker)
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("invalid ticker %q", ticker)
 	}
 
-	// Read response body for error checking
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+	var lastErr error
+	for _, symbol := range candidates {
+		s.enforceAlphaVantageRateLimit()
+
+		params := url.Values{}
+		params.Set("function", "OVERVIEW")
+		params.Set("symbol", symbol)
+		params.Set("apikey", s.cfg.AlphaVantageAPIKey)
+		params.Set("datatype", "json")
+		requestURL := "https://www.alphavantage.co/query?" + params.Encode()
+
+		resp, err := s.client.Get(requestURL)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: failed to fetch overview: %w", symbol, err)
+			continue
+		}
+
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("%s: failed to read response: %w", symbol, readErr)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("%s: API returned status %d", symbol, resp.StatusCode)
+			continue
+		}
+		if bytes.Contains(body, []byte("API call frequency")) || bytes.Contains(body, []byte("Thank you for using Alpha Vantage")) {
+			return nil, fmt.Errorf("Alpha Vantage rate limit reached (5 calls/minute for free tier)")
+		}
+		if bytes.Contains(body, []byte("Invalid API key")) {
+			return nil, fmt.Errorf("invalid Alpha Vantage API key")
+		}
+
+		var overview AlphaVantageOverview
+		if err := json.Unmarshal(body, &overview); err != nil {
+			lastErr = fmt.Errorf("%s: failed to decode overview: %w", symbol, err)
+			continue
+		}
+
+		if overview.Note != "" {
+			return nil, fmt.Errorf("Alpha Vantage rate limit: %s", overview.Note)
+		}
+		if overview.ErrorMessage != "" {
+			lastErr = fmt.Errorf("%s: Alpha Vantage error: %s", symbol, overview.ErrorMessage)
+			continue
+		}
+		if overview.Information != "" {
+			fmt.Printf("ℹ️ Alpha Vantage info (%s): %s\n", symbol, overview.Information)
+		}
+		if overview.Symbol == "" {
+			lastErr = fmt.Errorf("%s: no overview data returned", symbol)
+			continue
+		}
+		return &overview, nil
 	}
 
-	// Check for rate limit error in response
-	if bytes.Contains(body, []byte("API call frequency")) || bytes.Contains(body, []byte("Thank you for using Alpha Vantage")) {
-		return nil, fmt.Errorf("Alpha Vantage rate limit reached (5 calls/minute for free tier)")
+	if lastErr != nil {
+		return nil, fmt.Errorf("failed overview lookup for ticker %s: %w", ticker, lastErr)
 	}
-
-	// Check for invalid API key
-	if bytes.Contains(body, []byte("Invalid API key")) {
-		return nil, fmt.Errorf("invalid Alpha Vantage API key")
-	}
-
-	var overview AlphaVantageOverview
-	if err := json.Unmarshal(body, &overview); err != nil {
-		return nil, fmt.Errorf("failed to decode overview: %w", err)
-	}
-
-	// Check for structured error responses
-	if overview.Note != "" {
-		return nil, fmt.Errorf("Alpha Vantage rate limit: %s", overview.Note)
-	}
-	if overview.ErrorMessage != "" {
-		return nil, fmt.Errorf("Alpha Vantage error: %s", overview.ErrorMessage)
-	}
-	if overview.Information != "" {
-		fmt.Printf("ℹ️ Alpha Vantage info: %s\n", overview.Information)
-	}
-
-	// Check if we got valid data
-	if overview.Symbol == "" {
-		return nil, fmt.Errorf("no overview data returned for ticker %s", ticker)
-	}
-
-	return &overview, nil
+	return nil, fmt.Errorf("no overview data returned for ticker %s", ticker)
 }
 
 // parseFloat safely parses a string to float64, returning 0 on error
