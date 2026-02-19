@@ -15,13 +15,23 @@ import (
 
 // InitScheduler initializes the cron scheduler for automatic updates
 func InitScheduler(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) {
-	s := gocron.NewScheduler(time.UTC)
+	newYorkLocation, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		logger.Warn().Err(err).Msg("Failed to load America/New_York timezone, falling back to UTC")
+		newYorkLocation = time.UTC
+	}
+
+	s := gocron.NewScheduler(newYorkLocation)
 	apiService := services.NewExternalAPIService(cfg)
 	exchangeRateService := services.NewExchangeRateService(db, logger)
 
-	// Daily update job
-	if _, err := s.Every(1).Day().At("00:00").Do(func() {
-		logger.Info().Msg("Running daily stock update")
+	// Daily latest-price update job (Mon-Fri at 4:05 PM ET)
+	if _, err := s.Every(1).Day().At("16:05").Do(func() {
+		nowNY := time.Now().In(newYorkLocation)
+		if nowNY.Weekday() == time.Saturday || nowNY.Weekday() == time.Sunday {
+			return
+		}
+		logger.Info().Msg("Running weekday daily stock update at 4:05 PM ET")
 		updateStocksWithFrequency(db, apiService, exchangeRateService, logger, "daily")
 	}); err != nil {
 		logger.Error().Err(err).Msg("Failed to schedule daily update job")

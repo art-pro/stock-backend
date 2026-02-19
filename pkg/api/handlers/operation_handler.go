@@ -45,7 +45,7 @@ type CreateOperationRequest struct {
 	Currency      string  `json:"currency" binding:"required"`
 	Quantity      float64 `json:"quantity" binding:"required,gte=0"`
 	Price         float64 `json:"price" binding:"gte=0"`
-	Amount        float64 `json:"amount"`   // Optional; if 0 for Buy/Sell computed as Quantity*Price
+	Amount        float64 `json:"amount"` // Optional; if 0 for Buy/Sell computed as Quantity*Price
 	Note          string  `json:"note"`
 	TradeDate     string  `json:"trade_date" binding:"required"` // DD.MM.YYYY
 	StockID       *uint   `json:"stock_id,omitempty"`            // Optional; for Buy/Sell link to existing stock
@@ -370,22 +370,22 @@ func (h *OperationHandler) UpdateOperation(c *gin.Context) {
 	}
 
 	updated := models.Operation{
-		ID:           existing.ID,
-		PortfolioID:  existing.PortfolioID,
-		StockID:      req.StockID,
+		ID:            existing.ID,
+		PortfolioID:   existing.PortfolioID,
+		StockID:       req.StockID,
 		OperationType: req.OperationType,
-		Ticker:       req.Ticker,
-		ISIN:         req.ISIN,
-		CompanyName:  req.CompanyName,
-		Sector:       req.Sector,
-		Currency:     req.Currency,
-		Quantity:     req.Quantity,
-		Price:        req.Price,
-		Amount:       amount,
-		Note:         req.Note,
-		TradeDate:    req.TradeDate,
-		CreatedAt:    existing.CreatedAt,
-		UpdatedAt:    time.Now(),
+		Ticker:        req.Ticker,
+		ISIN:          req.ISIN,
+		CompanyName:   req.CompanyName,
+		Sector:        req.Sector,
+		Currency:      req.Currency,
+		Quantity:      req.Quantity,
+		Price:         req.Price,
+		Amount:        amount,
+		Note:          req.Note,
+		TradeDate:     req.TradeDate,
+		CreatedAt:     existing.CreatedAt,
+		UpdatedAt:     time.Now(),
 	}
 
 	if err := h.db.Transaction(func(tx *gorm.DB) error {

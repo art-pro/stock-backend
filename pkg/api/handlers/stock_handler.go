@@ -75,6 +75,65 @@ func (h *StockHandler) resolvePortfolioID(c *gin.Context) (uint, error) {
 	return database.GetDefaultPortfolioID(h.db)
 }
 
+func normalizeUpdateFrequency(raw string) string {
+	frequency := strings.ToLower(strings.TrimSpace(raw))
+	switch frequency {
+	case "daily", "weekly", "monthly", "manually":
+		return frequency
+	default:
+		return ""
+	}
+}
+
+func (h *StockHandler) refreshLatestPriceForStock(stock *models.Stock) error {
+	quote, err := h.apiService.FetchAlphaVantageQuote(stock.Ticker)
+	if err != nil {
+		return err
+	}
+
+	price, err := strconv.ParseFloat(quote.GlobalQuote.Price, 64)
+	if err != nil || price <= 0 {
+		return fmt.Errorf("invalid latest price from Alpha Vantage for %s", stock.Ticker)
+	}
+
+	now := time.Now()
+	stock.CurrentPrice = price
+	stock.LastUpdated = now
+	stock.DataSource = "Alpha Vantage"
+	stock.AlphaVantageFetchedAt = &now
+
+	quotePayload, _ := json.Marshal(gin.H{"quote": quote})
+	stock.AlphaVantageRawJSON = string(quotePayload)
+
+	services.CalculateMetrics(stock)
+	if err := h.updateStockUSDValues(stock); err != nil {
+		return err
+	}
+
+	if err := h.db.Save(stock).Error; err != nil {
+		return err
+	}
+
+	history := models.StockHistory{
+		StockID:             stock.ID,
+		PortfolioID:         stock.PortfolioID,
+		Ticker:              stock.Ticker,
+		CurrentPrice:        stock.CurrentPrice,
+		FairValue:           stock.FairValue,
+		UpsidePotential:     stock.UpsidePotential,
+		DownsideRisk:        stock.DownsideRisk,
+		ProbabilityPositive: stock.ProbabilityPositive,
+		ExpectedValue:       stock.ExpectedValue,
+		KellyFraction:       stock.KellyFraction,
+		Weight:              stock.Weight,
+		Assessment:          stock.Assessment,
+		RecordedAt:          now,
+	}
+	h.db.Create(&history)
+
+	return nil
+}
+
 // GetAllStocks returns all stocks
 func (h *StockHandler) GetAllStocks(c *gin.Context) {
 	portfolioID, err := h.resolvePortfolioID(c)
@@ -159,6 +218,13 @@ func (h *StockHandler) CreateStock(c *gin.Context) {
 	}
 	if stock.UpdateFrequency == "" {
 		stock.UpdateFrequency = "daily"
+	} else {
+		normalized := normalizeUpdateFrequency(stock.UpdateFrequency)
+		if normalized == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid update_frequency. Allowed: daily, weekly, monthly, manually"})
+			return
+		}
+		stock.UpdateFrequency = normalized
 	}
 	if stock.ProbabilityPositive == 0 {
 		stock.ProbabilityPositive = 0.65 // Default conservative value
@@ -310,6 +376,15 @@ func (h *StockHandler) UpdateStock(c *gin.Context) {
 	if len(sanitized) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No valid fields to update"})
 		return
+	}
+
+	if rawFrequency, ok := sanitized["update_frequency"].(string); ok {
+		normalized := normalizeUpdateFrequency(rawFrequency)
+		if normalized == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid update_frequency. Allowed: daily, weekly, monthly, manually"})
+			return
+		}
+		sanitized["update_frequency"] = normalized
 	}
 
 	// Update allowed fields
@@ -492,10 +567,20 @@ func (h *StockHandler) UpdateStockField(c *gin.Context) {
 		}
 	case "update_frequency":
 		if req.StringValue != "" {
-			stock.UpdateFrequency = req.StringValue
+			normalized := normalizeUpdateFrequency(req.StringValue)
+			if normalized == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid update_frequency. Allowed: daily, weekly, monthly, manually"})
+				return
+			}
+			stock.UpdateFrequency = normalized
 			fieldUpdated = true
 		} else if strVal, ok := req.Value.(string); ok && strVal != "" {
-			stock.UpdateFrequency = strVal
+			normalized := normalizeUpdateFrequency(strVal)
+			if normalized == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid update_frequency. Allowed: daily, weekly, monthly, manually"})
+				return
+			}
+			stock.UpdateFrequency = normalized
 			fieldUpdated = true
 		}
 	case "isin":
@@ -660,6 +745,10 @@ type CollectFairValuesRequest struct {
 	IDs []uint `json:"ids" binding:"required,min=1"`
 }
 
+type BulkLatestPriceRequest struct {
+	IDs []uint `json:"ids" binding:"required,min=1"`
+}
+
 // CollectFairValues fetches fair values from trusted sources (via Grok + Deepseek) for selected stocks.
 func (h *StockHandler) CollectFairValues(c *gin.Context) {
 	portfolioID, err := h.resolvePortfolioID(c)
@@ -788,6 +877,76 @@ func (h *StockHandler) CollectFairValues(c *gin.Context) {
 		"total_requested":       len(req.IDs),
 		"entries_saved":         totalSources,
 		"trusted_entries_saved": totalSources,
+	})
+}
+
+// UpdateLatestPrice fetches the latest Alpha Vantage quote for one stock.
+func (h *StockHandler) UpdateLatestPrice(c *gin.Context) {
+	id := c.Param("id")
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
+	var stock models.Stock
+	if err := h.db.Where("id = ? AND portfolio_id = ?", id, portfolioID).First(&stock).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found"})
+		return
+	}
+
+	if err := h.refreshLatestPriceForStock(&stock); err != nil {
+		h.logger.Error().Err(err).Str("ticker", stock.Ticker).Msg("Failed to refresh latest price")
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch latest price from Alpha Vantage"})
+		return
+	}
+
+	c.JSON(http.StatusOK, stock)
+}
+
+// BulkUpdateLatestPrices fetches latest Alpha Vantage quotes for selected stocks.
+func (h *StockHandler) BulkUpdateLatestPrices(c *gin.Context) {
+	portfolioID, err := h.resolvePortfolioID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid portfolio_id"})
+		return
+	}
+
+	var req BulkLatestPriceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+		return
+	}
+
+	var stocks []models.Stock
+	if err := h.db.Where("id IN ? AND portfolio_id = ?", req.IDs, portfolioID).Find(&stocks).Error; err != nil {
+		h.logger.Error().Err(err).Msg("Failed to fetch selected stocks for latest price update")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch selected stocks"})
+		return
+	}
+
+	if len(stocks) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No matching stocks found for selected IDs"})
+		return
+	}
+
+	updated := 0
+	errors := make([]string, 0)
+	for i := range stocks {
+		if err := h.refreshLatestPriceForStock(&stocks[i]); err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", stocks[i].Ticker, err))
+			continue
+		}
+		updated++
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":         "Latest price refresh completed",
+		"updated":         updated,
+		"errors":          len(errors),
+		"error_details":   errors,
+		"total_requested": len(req.IDs),
+		"total_found":     len(stocks),
 	})
 }
 
@@ -1231,6 +1390,13 @@ func (h *StockHandler) BulkUpdateStocks(c *gin.Context) {
 			// Set default update frequency if not provided
 			if stock.UpdateFrequency == "" {
 				stock.UpdateFrequency = "daily"
+			} else {
+				normalized := normalizeUpdateFrequency(stock.UpdateFrequency)
+				if normalized == "" {
+					errors = append(errors, "Invalid update_frequency for "+stockData.Ticker+": "+stock.UpdateFrequency)
+					continue
+				}
+				stock.UpdateFrequency = normalized
 			}
 
 			if stock.SharesOwned > 0 && stock.CurrentPrice > 0 {
@@ -1330,7 +1496,12 @@ func (h *StockHandler) BulkUpdateStocks(c *gin.Context) {
 				existing.Assessment = stockData.Assessment
 			}
 			if stockData.UpdateFrequency != "" {
-				existing.UpdateFrequency = stockData.UpdateFrequency
+				normalized := normalizeUpdateFrequency(stockData.UpdateFrequency)
+				if normalized == "" {
+					errors = append(errors, "Invalid update_frequency for "+stockData.Ticker+": "+stockData.UpdateFrequency)
+					continue
+				}
+				existing.UpdateFrequency = normalized
 			}
 			if stockData.DataSource != "" {
 				existing.DataSource = stockData.DataSource
