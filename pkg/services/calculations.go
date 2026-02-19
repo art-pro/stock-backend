@@ -200,6 +200,7 @@ func CalculatePortfolioMetrics(stocks []models.Stock, fxRates map[string]float64
 		SharpeRatio:        sharpeRatio,
 		KellyUtilization:   kellyUtilization,
 		SectorWeights:      sectorWeights,
+		RealizedPnL:        0, // Set by handler from operations (FIFO)
 	}
 }
 
@@ -211,6 +212,7 @@ type PortfolioMetrics struct {
 	SharpeRatio        float64            `json:"sharpe_ratio"`
 	KellyUtilization   float64            `json:"kelly_utilization"`
 	SectorWeights      map[string]float64 `json:"sector_weights"`
+	RealizedPnL        float64            `json:"realized_pnl"` // Lifetime realized PnL from closed trades (FIFO), in base currency (EUR)
 }
 
 type BuyZone struct {

@@ -85,6 +85,15 @@ func (h *PortfolioHandler) GetPortfolioSummary(c *gin.Context) {
 	// Calculate portfolio metrics
 	metrics := services.CalculatePortfolioMetrics(stocks, fxRates)
 
+	// Realized PnL from Buy/Sell operations (FIFO, base currency EUR)
+	var operations []models.Operation
+	if err := h.db.Where("portfolio_id = ? AND operation_type IN ?", portfolioID, []string{"Buy", "Sell"}).
+		Order("trade_date ASC, created_at ASC").Find(&operations).Error; err == nil {
+		if realized, err := services.ComputeRealizedPnL(operations, fxRates); err == nil {
+			metrics.RealizedPnL = realized
+		}
+	}
+
 	// Update weights for each stock
 	tx := h.db.Begin()
 	if tx.Error != nil {
