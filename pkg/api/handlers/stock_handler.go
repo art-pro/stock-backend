@@ -724,6 +724,33 @@ func (h *StockHandler) DeleteStock(c *gin.Context) {
 		return
 	}
 
+	// Delete dependent rows so FK constraints allow stock deletion
+	if err := tx.Where("stock_id = ?", stock.ID).Delete(&models.StockHistory{}).Error; err != nil {
+		tx.Rollback()
+		h.logger.Error().Err(err).Msg("Failed to delete stock history")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete stock"})
+		return
+	}
+	if err := tx.Where("stock_id = ?", stock.ID).Delete(&models.FairValueHistory{}).Error; err != nil {
+		tx.Rollback()
+		h.logger.Error().Err(err).Msg("Failed to delete fair value history")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete stock"})
+		return
+	}
+	if err := tx.Where("stock_id = ?", stock.ID).Delete(&models.Alert{}).Error; err != nil {
+		tx.Rollback()
+		h.logger.Error().Err(err).Msg("Failed to delete alerts for stock")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete stock"})
+		return
+	}
+	// Unlink operations that reference this stock (optional FK)
+	if err := tx.Model(&models.Operation{}).Where("stock_id = ?", stock.ID).Update("stock_id", nil).Error; err != nil {
+		tx.Rollback()
+		h.logger.Error().Err(err).Msg("Failed to unlink operations from stock")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete stock"})
+		return
+	}
+
 	if err := tx.Delete(&stock).Error; err != nil {
 		tx.Rollback()
 		h.logger.Error().Err(err).Msg("Failed to delete stock")
