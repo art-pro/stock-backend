@@ -557,6 +557,31 @@ func (h *StockHandler) UpdateStockField(c *gin.Context) {
 			stock.CompanyName = strVal
 			fieldUpdated = true
 		}
+	case "ticker":
+		var nextTicker string
+		if req.StringValue != "" {
+			nextTicker = strings.ToUpper(strings.TrimSpace(req.StringValue))
+		} else if strVal, ok := req.Value.(string); ok {
+			nextTicker = strings.ToUpper(strings.TrimSpace(strVal))
+		}
+
+		if nextTicker == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Ticker cannot be empty"})
+			return
+		}
+
+		var existing models.Stock
+		if err := h.db.Where("portfolio_id = ? AND id <> ? AND UPPER(ticker) = ?", stock.PortfolioID, stock.ID, nextTicker).First(&existing).Error; err == nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "Stock with this ticker already exists in the selected portfolio"})
+			return
+		} else if err != nil && err != gorm.ErrRecordNotFound {
+			h.logger.Error().Err(err).Msg("Failed to validate ticker uniqueness")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate ticker"})
+			return
+		}
+
+		stock.Ticker = nextTicker
+		fieldUpdated = true
 	case "sector":
 		if req.StringValue != "" {
 			stock.Sector = req.StringValue
@@ -612,7 +637,7 @@ func (h *StockHandler) UpdateStockField(c *gin.Context) {
 	stock.LastUpdated = time.Now()
 
 	// Recalculate all derived metrics (only if numeric fields changed)
-	if req.Field != "comment" && req.Field != "company_name" && req.Field != "sector" && req.Field != "update_frequency" && req.Field != "isin" && req.Field != "fair_value_source" {
+	if req.Field != "comment" && req.Field != "company_name" && req.Field != "ticker" && req.Field != "sector" && req.Field != "update_frequency" && req.Field != "isin" && req.Field != "fair_value_source" {
 		services.CalculateMetrics(&stock)
 
 		if err := h.updateStockUSDValues(&stock); err != nil {
