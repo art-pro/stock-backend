@@ -608,6 +608,19 @@ func (h *StockHandler) UpdateStockField(c *gin.Context) {
 			stock.UpdateFrequency = normalized
 			fieldUpdated = true
 		}
+	case "currency":
+		var nextCurrency string
+		if req.StringValue != "" {
+			nextCurrency = strings.ToUpper(strings.TrimSpace(req.StringValue))
+		} else if strVal, ok := req.Value.(string); ok && strVal != "" {
+			nextCurrency = strings.ToUpper(strings.TrimSpace(strVal))
+		}
+		if len(nextCurrency) != 3 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Currency must be a 3-letter code"})
+			return
+		}
+		stock.Currency = nextCurrency
+		fieldUpdated = true
 	case "isin":
 		if req.StringValue != "" {
 			stock.ISIN = req.StringValue
