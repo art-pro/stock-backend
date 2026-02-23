@@ -41,6 +41,8 @@ func CalculateMetrics(stock *models.Stock) {
 	// 2. Upside Potential = ((Fair Value - Current Price) / Current Price) * 100
 	if stock.CurrentPrice > 0 && stock.FairValue > 0 {
 		stock.UpsidePotential = ((stock.FairValue - stock.CurrentPrice) / stock.CurrentPrice) * 100
+	} else {
+		stock.UpsidePotential = 0
 	}
 
 	// 3. Use conservative default probability when missing/invalid.
@@ -61,7 +63,7 @@ func CalculateMetrics(stock *models.Stock) {
 
 	// 6. Kelly f* = ((b * p) - (1 - p)) / b, expressed in percent and clamped at 0.
 	if stock.BRatio > 0 {
-		stock.KellyFraction = ((stock.BRatio*stock.ProbabilityPositive)-(1-stock.ProbabilityPositive))/stock.BRatio * 100
+		stock.KellyFraction = ((stock.BRatio * stock.ProbabilityPositive) - (1 - stock.ProbabilityPositive)) / stock.BRatio * 100
 		if stock.KellyFraction < 0 {
 			stock.KellyFraction = 0
 		}
@@ -109,6 +111,10 @@ func CalculateMetrics(stock *models.Stock) {
 			default:
 				stock.BuyZoneStatus = "outside buy zone"
 			}
+		} else {
+			stock.BuyZoneMin = 0
+			stock.BuyZoneMax = 0
+			stock.BuyZoneStatus = "no buy zone available"
 		}
 	} else {
 		stock.BuyZoneMin = 0
@@ -221,13 +227,13 @@ type BuyZone struct {
 }
 
 type BuyZoneCalculationResult struct {
-	Ticker              string  `json:"ticker"`
-	FairValue           float64 `json:"fair_value"`
-	ProbabilityPositive float64 `json:"probability_positive"`
-	DownsideRisk        float64 `json:"downside_risk"`
-	BuyZone             BuyZone `json:"buy_zone"`
+	Ticker               string  `json:"ticker"`
+	FairValue            float64 `json:"fair_value"`
+	ProbabilityPositive  float64 `json:"probability_positive"`
+	DownsideRisk         float64 `json:"downside_risk"`
+	BuyZone              BuyZone `json:"buy_zone"`
 	CurrentExpectedValue float64 `json:"current_expected_value"`
-	ZoneStatus          string  `json:"zone_status,omitempty"`
+	ZoneStatus           string  `json:"zone_status,omitempty"`
 }
 
 type SellZone struct {
