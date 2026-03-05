@@ -65,7 +65,7 @@ type Stock struct {
 	AvgPriceLocal         float64    `json:"avg_price_local"`                         // Entry cost in local currency
 	CurrentValueUSD       float64    `json:"current_value_usd"`                       // Position value in USD
 	Weight                float64    `json:"weight"`                                  // Portfolio allocation as fraction 0–1 (×100 for %)
-	UnrealizedPnL         float64    `json:"unrealized_pnl"`                          // In USD
+	UnrealizedPnL         float64    `gorm:"column:unrealized_pnl" json:"unrealized_pnl"` // In USD
 	BuyZoneMin            float64    `json:"buy_zone_min"`                            // Minimum price for buy zone
 	BuyZoneMax            float64    `json:"buy_zone_max"`                            // Maximum price for buy zone
 	BuyZoneStatus         string     `json:"buy_zone_status"`                         // EV >> 15%/within/outside buy zone
