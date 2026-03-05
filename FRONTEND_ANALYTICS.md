@@ -551,6 +551,13 @@ For calculation questions:
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 1.1
 **Last Updated:** 2026-03-05
 **Backend Version Required:** v2.11.0+
+
+## Changelog
+
+### v1.1 (2026-03-05)
+- Fixed database column naming for `unrealized_pnl` field
+- Added explicit GORM column tag to prevent naming issues with GORM's snake_case conversion
+- All analytics tests passing
