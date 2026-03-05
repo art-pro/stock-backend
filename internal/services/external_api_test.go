@@ -54,13 +54,18 @@ func TestFetchExchangeRateUsesCachedAndFallbackRates(t *testing.T) {
 	if got, err := svc.FetchExchangeRate("SEK"); err != nil || got != 0.096 {
 		t.Fatalf("mock SEK rate: got (%.4f, %v) want (0.096, nil)", got, err)
 	}
+
+	// Verify EUR always returns 1.0 (base currency)
+	if got, err := svc.FetchExchangeRate("EUR"); err != nil || got != 1.0 {
+		t.Fatalf("EUR rate: got (%.4f, %v) want (1.0, nil)", got, err)
+	}
 }
 
 func TestMockStockDataSetsNAFieldsAndCachesExchangeRate(t *testing.T) {
 	t.Parallel()
 
 	svc := NewExternalAPIService(&config.Config{})
-	stock := &models.Stock{Currency: "GBP"}
+	stock := &models.Stock{Currency: "GBP", Ticker: "TEST"}
 
 	err := svc.mockStockData(stock)
 	if err == nil {
@@ -74,5 +79,64 @@ func TestMockStockDataSetsNAFieldsAndCachesExchangeRate(t *testing.T) {
 	}
 	if got, ok := svc.getCachedExchangeRate("GBP"); !ok || got != 1.27 {
 		t.Fatalf("GBP cached mock rate: got (%v, %v) want (%v, %v)", got, ok, 1.27, true)
+	}
+
+	// Verify ticker is preserved
+	if stock.Ticker != "TEST" {
+		t.Errorf("Ticker should be preserved, got %s", stock.Ticker)
+	}
+}
+
+func TestExternalAPIServiceConcurrentCacheAccess(t *testing.T) {
+	t.Parallel()
+
+	svc := NewExternalAPIService(&config.Config{})
+
+	// Test concurrent cache reads and writes
+	done := make(chan bool)
+	for i := 0; i < 10; i++ {
+		go func(id int) {
+			defer func() { done <- true }()
+			currency := "TST" + string(rune('A'+id))
+			rate := float64(1.0 + float64(id)*0.1)
+
+			svc.cacheExchangeRate(currency, rate)
+			got, ok := svc.getCachedExchangeRate(currency)
+			if !ok || got != rate {
+				t.Errorf("concurrent cache: got (%v, %v) want (%v, %v)", got, ok, rate, true)
+			}
+		}(i)
+	}
+
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+}
+
+func TestGetMockExchangeRateKnownCurrencies(t *testing.T) {
+	t.Parallel()
+
+	svc := NewExternalAPIService(&config.Config{})
+
+	tests := []struct {
+		currency string
+		want     float64
+	}{
+		{"USD", 1.0},
+		{"EUR", 1.0},
+		{"GBP", 1.27},
+		{"CHF", 1.08},
+		{"DKK", 0.1538},
+		{"SEK", 0.096},
+		{"UNKNOWN", 0.15},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.currency, func(t *testing.T) {
+			got := svc.getMockExchangeRate(tt.currency)
+			if got != tt.want {
+				t.Errorf("getMockExchangeRate(%s) = %.4f, want %.4f", tt.currency, got, tt.want)
+			}
+		})
 	}
 }

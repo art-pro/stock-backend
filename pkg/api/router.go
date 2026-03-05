@@ -71,6 +71,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 	operationHandler := handlers.NewOperationHandler(db, cashHandler, logger)
 	assessmentHandler := handlers.NewAssessmentHandler(db, cfg, logger)
 	settingsHandler := handlers.NewSettingsHandler(db, logger)
+	analyticsHandler := handlers.NewAnalyticsHandler(db, logger)
 
 	// Public routes
 	public := router.Group("/api")
@@ -173,6 +174,10 @@ func SetupRouter(db *gorm.DB, cfg *config.Config, logger zerolog.Logger) *gin.En
 		protected.POST("/settings/columns", settingsHandler.SaveColumnSettings)
 		protected.GET("/settings/sector-targets", settingsHandler.GetSectorTargets)
 		protected.POST("/settings/sector-targets", settingsHandler.SaveSectorTargets)
+
+		// Analytics routes
+		protected.GET("/analytics/top-movers", analyticsHandler.GetTopMovers)
+		protected.GET("/analytics/top-losers", analyticsHandler.GetTopLosers)
 	}
 
 	// Large payload routes (image uploads) with 100MB limit
