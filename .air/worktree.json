@@ -1,0 +1,13 @@
+{
+    "setup": {
+        "linux": [
+            "/usr/bin/git"
+        ],
+        "windows": [
+            "C:\\Program Files\\Git\\bin\\git.exe"
+        ],
+        "macos": [
+            "/usr/bin/git"
+        ]
+    }
+}

@@ -234,7 +234,19 @@ Protected (`/api`, JWT):
 - Assessment: request (body may include optional `rebalance_hint`, `concentration_hint`, `suggested_actions_hint` from frontend dashboard panes), vision extraction, recent/history
 - User settings: table column configuration; **sector allocation targets** (persistent per user):
   - `GET /settings/sector-targets` – returns `{ "rows": [ { "sector", "min", "max", "rationale" }, ... ] }` or `{ "rows": null }` if none saved. Stored in `UserSettings` with key `sector_targets`.
-  - `POST /settings/sector-targets` – body `{ "rows": [...] }`; creates or updates the user’s sector targets (equity sectors + Cash). Used by frontend for rebalance hints and sector headers.
+  - `POST /settings/sector-targets` – body `{ "rows": [...] }`; creates or updates the user's sector targets (equity sectors + Cash). Used by frontend for rebalance hints and sector headers.
+- **Analytics**: unrealized PnL statistics and portfolio performance analysis:
+  - `GET /analytics/unrealized-pnl` – query `portfolio_id` optional; returns comprehensive unrealized PnL analytics:
+    - `summary`: total unrealized PnL (USD/EUR), total cost basis, current value, return %, winning/losing positions count, win rate %
+    - `by_sector`: unrealized PnL breakdown by sector with position counts and sector return %
+    - `top_gainers`: top 10 positions with highest unrealized gains (sorted descending)
+    - `top_losers`: top 10 positions with highest unrealized losses (sorted by PnL ascending)
+    - `units`: metadata clarifying units (USD for PnL/values, percent for returns)
+  - All calculations use EUR as base currency (consistent with portfolio summary), then convert to USD for display
+  - FX conversion follows standard semantics: rates stored as currency units per 1 EUR
+  - Only includes positions with `shares_owned > 0`
+  - Cost basis calculated from `shares_owned * avg_price_local` converted to EUR, then to USD
+  - Scoped by `portfolio_id` (query param or default portfolio)
 
 ## Scheduler Responsibilities
 

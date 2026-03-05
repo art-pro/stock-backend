@@ -39,21 +39,21 @@ func (h *AnalyticsHandler) resolvePortfolioID(c *gin.Context) (uint, error) {
 
 // TopLosersResponse represents the response structure for top losers
 type TopLosersResponse struct {
-	Ticker              string  `json:"ticker"`
-	CompanyName         string  `json:"company_name"`
-	Sector              string  `json:"sector"`
-	Currency            string  `json:"currency"`
-	CurrentPrice        float64 `json:"current_price"`
-	UnrealizedPnL       float64 `json:"unrealized_pnl"`
-	UnrealizedPnLPct    float64 `json:"unrealized_pnl_pct"`
-	SharesOwned         int     `json:"shares_owned"`
-	AvgPriceLocal       float64 `json:"avg_price_local"`
-	CurrentValueUSD     float64 `json:"current_value_usd"`
-	Weight              float64 `json:"weight"`
-	ExpectedValue       float64 `json:"expected_value"`
-	Assessment          string  `json:"assessment"`
-	BuyZoneStatus       string  `json:"buy_zone_status"`
-	SellZoneStatus      string  `json:"sell_zone_status"`
+	Ticker           string  `json:"ticker"`
+	CompanyName      string  `json:"company_name"`
+	Sector           string  `json:"sector"`
+	Currency         string  `json:"currency"`
+	CurrentPrice     float64 `json:"current_price"`
+	UnrealizedPnL    float64 `json:"unrealized_pnl"`
+	UnrealizedPnLPct float64 `json:"unrealized_pnl_pct"`
+	SharesOwned      int     `json:"shares_owned"`
+	AvgPriceLocal    float64 `json:"avg_price_local"`
+	CurrentValueUSD  float64 `json:"current_value_usd"`
+	Weight           float64 `json:"weight"`
+	ExpectedValue    float64 `json:"expected_value"`
+	Assessment       string  `json:"assessment"`
+	BuyZoneStatus    string  `json:"buy_zone_status"`
+	SellZoneStatus   string  `json:"sell_zone_status"`
 }
 
 // GetTopLosers returns stocks with the worst unrealized P&L (owned positions only)
@@ -131,20 +131,20 @@ func (h *AnalyticsHandler) GetTopLosers(c *gin.Context) {
 
 // MoverData represents a stock's movement data
 type MoverData struct {
-	StockID              uint      `json:"stock_id"`
-	Ticker               string    `json:"ticker"`
-	CompanyName          string    `json:"company_name"`
-	Sector               string    `json:"sector"`
-	CurrentPrice         float64   `json:"current_price"`
-	PreviousPrice        float64   `json:"previous_price"`
-	PriceChange          float64   `json:"price_change"`
-	PriceChangePercent   float64   `json:"price_change_percent"`
-	CurrentEV            float64   `json:"current_ev"`
-	PreviousEV           float64   `json:"previous_ev"`
-	EVChange             float64   `json:"ev_change"`
-	CurrentAssessment    string    `json:"current_assessment"`
-	PreviousAssessment   string    `json:"previous_assessment"`
-	LastUpdated          time.Time `json:"last_updated"`
+	StockID            uint      `json:"stock_id"`
+	Ticker             string    `json:"ticker"`
+	CompanyName        string    `json:"company_name"`
+	Sector             string    `json:"sector"`
+	CurrentPrice       float64   `json:"current_price"`
+	PreviousPrice      float64   `json:"previous_price"`
+	PriceChange        float64   `json:"price_change"`
+	PriceChangePercent float64   `json:"price_change_percent"`
+	CurrentEV          float64   `json:"current_ev"`
+	PreviousEV         float64   `json:"previous_ev"`
+	EVChange           float64   `json:"ev_change"`
+	CurrentAssessment  string    `json:"current_assessment"`
+	PreviousAssessment string    `json:"previous_assessment"`
+	LastUpdated        time.Time `json:"last_updated"`
 }
 
 // TopMoversResponse represents the response for top movers

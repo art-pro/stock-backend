@@ -95,7 +95,7 @@ func TestSaveSectorTargets_ThenGet(t *testing.T) {
 	if err := db.Where("user_id = ? AND setting_key = ?", uid, "sector_targets").First(&setting).Error; err != nil {
 		t.Fatalf("find settings record: %v", err)
 	}
-	if setting.SettingValue == "" {
+	if setting.Value == "" {
 		t.Errorf("expected non-empty setting value")
 	}
 
