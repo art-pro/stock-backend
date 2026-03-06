@@ -1101,7 +1101,7 @@ func (h *AssessmentHandler) generatePerplexityAssessment(ticker, isin, companyNa
 	return content, nil
 }
 
-// generateChatGPTAssessment generates assessment using OpenAI ChatGPT (gpt-5.2-chat-latest).
+// generateChatGPTAssessment generates assessment using OpenAI ChatGPT (gpt-5.4-chat-latest).
 func (h *AssessmentHandler) generateChatGPTAssessment(ticker, isin, companyName string, currentPrice float64, currency string, rebalanceHint, concentrationHint, suggestedActionsHint string) (string, error) {
 	if h.cfg.OpenAIAPIKey == "" {
 		return "", fmt.Errorf("OpenAI API key not configured")
@@ -1115,7 +1115,7 @@ func (h *AssessmentHandler) generateChatGPTAssessment(ticker, isin, companyName 
 	prompt := h.buildAssessmentPrompt(ticker, isin, companyName, currentPrice, currency, portfolioData, cashData, rebalanceHint, concentrationHint, suggestedActionsHint)
 
 	reqBody := map[string]interface{}{
-		"model": "gpt-5.2-chat-latest",
+		"model": "gpt-5.4-chat-latest",
 		"messages": []map[string]string{
 			{
 				"role":    "system",
@@ -1216,7 +1216,7 @@ func (h *AssessmentHandler) callChatCompletion(systemContent, userContent, sourc
 	case "chatgpt":
 		url = "https://api.openai.com/v1/chat/completions"
 		apiKey = h.cfg.OpenAIAPIKey
-		model = "gpt-5.2-chat-latest"
+		model = "gpt-5.4-chat-latest"
 	default:
 		url = "https://api.x.ai/v1/chat/completions"
 		apiKey = h.cfg.XAIAPIKey
